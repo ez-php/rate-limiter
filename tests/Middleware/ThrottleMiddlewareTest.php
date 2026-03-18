@@ -37,7 +37,7 @@ final class ThrottleMiddlewareTest extends TestCase
     {
         $middleware = new ThrottleMiddleware($this->limiter, 3, 60);
         $request = $this->makeRequest();
-        $next = fn(Request $r): Response => new Response('OK', 200);
+        $next = fn (Request $r): Response => new Response('OK', 200);
 
         $response = $middleware->handle($request, $next);
 
@@ -51,7 +51,7 @@ final class ThrottleMiddlewareTest extends TestCase
     {
         $middleware = new ThrottleMiddleware($this->limiter, 5, 60);
         $request = $this->makeRequest();
-        $next = fn(Request $r): Response => new Response('OK', 200);
+        $next = fn (Request $r): Response => new Response('OK', 200);
 
         $response = $middleware->handle($request, $next);
 
@@ -66,7 +66,7 @@ final class ThrottleMiddlewareTest extends TestCase
     {
         $middleware = new ThrottleMiddleware($this->limiter, 3, 60);
         $request = $this->makeRequest();
-        $next = fn(Request $r): Response => new Response('OK', 200);
+        $next = fn (Request $r): Response => new Response('OK', 200);
 
         $middleware->handle($request, $next);
         $response = $middleware->handle($request, $next);
@@ -83,7 +83,7 @@ final class ThrottleMiddlewareTest extends TestCase
     {
         $middleware = new ThrottleMiddleware($this->limiter, 1, 60);
         $request = $this->makeRequest();
-        $next = fn(Request $r): Response => new Response('OK', 200);
+        $next = fn (Request $r): Response => new Response('OK', 200);
 
         $middleware->handle($request, $next);
         $response = $middleware->handle($request, $next);
@@ -121,7 +121,7 @@ final class ThrottleMiddlewareTest extends TestCase
         $middleware = new ThrottleMiddleware($this->limiter, 1, 60);
         $requestA = $this->makeRequest(server: ['REMOTE_ADDR' => '1.2.3.4']);
         $requestB = $this->makeRequest(server: ['REMOTE_ADDR' => '9.9.9.9']);
-        $next = fn(Request $r): Response => new Response('OK', 200);
+        $next = fn (Request $r): Response => new Response('OK', 200);
 
         // exhaust key for 1.2.3.4
         $middleware->handle($requestA, $next);
@@ -142,7 +142,7 @@ final class ThrottleMiddlewareTest extends TestCase
             headers: ['x-forwarded-for' => '5.6.7.8, 10.0.0.1'],
             server: ['REMOTE_ADDR' => '10.0.0.1'],
         );
-        $next = fn(Request $r): Response => new Response('OK', 200);
+        $next = fn (Request $r): Response => new Response('OK', 200);
 
         // first request uses 5.6.7.8 as key → allowed
         $middleware->handle($request, $next);
