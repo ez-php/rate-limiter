@@ -95,6 +95,7 @@ final class RedisDriver implements RateLimiterInterface
      */
     private function currentHits(string $key): int
     {
+        /** @var string|false $raw */
         $raw = $this->redis->get($key);
 
         return $raw !== false ? (int) $raw : 0;

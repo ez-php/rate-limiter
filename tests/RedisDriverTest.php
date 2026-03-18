@@ -31,8 +31,8 @@ final class RedisDriverTest extends TestCase
             $this->markTestSkipped('ext-redis is not available.');
         }
 
-        $host = (string) ($_ENV['REDIS_HOST'] ?? getenv('REDIS_HOST') ?: '127.0.0.1');
-        $port = (int) ($_ENV['REDIS_PORT'] ?? getenv('REDIS_PORT') ?: 6379);
+        $host = getenv('REDIS_HOST') ?: '127.0.0.1';
+        $port = (int) (getenv('REDIS_PORT') ?: 6379);
 
         $this->redis = new Redis();
         $this->redis->connect($host, $port);
