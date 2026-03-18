@@ -7,7 +7,6 @@ namespace Tests;
 use EzPhp\Cache\ArrayDriver as CacheArrayDriver;
 use EzPhp\RateLimiter\CacheDriver;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\UsesClass;
 
 /**
  * Class CacheDriverTest
@@ -18,7 +17,6 @@ use PHPUnit\Framework\Attributes\UsesClass;
  * @package Tests
  */
 #[CoversClass(CacheDriver::class)]
-#[UsesClass(CacheArrayDriver::class)]
 final class CacheDriverTest extends TestCase
 {
     private CacheDriver $driver;
