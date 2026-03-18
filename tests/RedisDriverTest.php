@@ -37,8 +37,12 @@ final class RedisDriverTest extends TestCase
         $this->redis = new Redis();
 
         try {
-            $this->redis->connect($host, $port);
+            $connected = $this->redis->connect($host, $port);
         } catch (\RedisException) {
+            $this->markTestSkipped("Redis is not available at {$host}:{$port}.");
+        }
+
+        if (!$connected) {
             $this->markTestSkipped("Redis is not available at {$host}:{$port}.");
         }
 
