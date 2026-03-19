@@ -159,7 +159,8 @@ src/
 ├── ArrayDriver.php                    — In-process PHP array; per-key decay window; no external deps
 ├── RedisDriver.php                    — Redis backend via ext-redis; INCR + EXPIRE per decay window
 ├── CacheDriver.php                    — Delegates to ez-php/cache CacheInterface; stores {hits, reset_at} array
-├── RateLimiterServiceProvider.php     — Binds RateLimiterInterface per rate_limiter.driver config
+├── RateLimiter.php                    — Static facade backed by a managed singleton; falls back to ArrayDriver
+├── RateLimiterServiceProvider.php     — Binds RateLimiterInterface per config; sets RateLimiter singleton in boot()
 └── Middleware/
     └── ThrottleMiddleware.php         — MiddlewareInterface; per-IP throttle; 429 on exceed; rate-limit headers
 
@@ -168,6 +169,7 @@ tests/
 ├── ArrayDriverTest.php                — Full contract tests; no external infrastructure
 ├── RedisDriverTest.php                — Full contract tests; requires live Redis; skipped without ext-redis
 ├── CacheDriverTest.php                — Full contract tests; uses ez-php/cache ArrayDriver as backing store
+├── RateLimiterTest.php                — Covers facade: instance management, all four static methods
 └── Middleware/
     └── ThrottleMiddlewareTest.php     — Pass-through, 429, headers, IP resolution via ArrayDriver
 ```

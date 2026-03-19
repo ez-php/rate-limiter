@@ -24,6 +24,14 @@ final class RateLimiterServiceProvider extends ServiceProvider
     /**
      * @return void
      */
+    public function boot(): void
+    {
+        RateLimiter::setInstance(new RateLimiter($this->app->make(RateLimiterInterface::class)));
+    }
+
+    /**
+     * @return void
+     */
     public function register(): void
     {
         $this->app->bind(RateLimiterInterface::class, function (): RateLimiterInterface {
