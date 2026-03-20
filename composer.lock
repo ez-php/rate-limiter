@@ -124,16 +124,16 @@
         },
         {
             "name": "ez-php/http",
-            "version": "0.5.1",
+            "version": "0.5.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/http.git",
-                "reference": "d46f180359a52de8d42bf7929a6d811cf6d56500"
+                "reference": "ac98e2102b1418e4b80a08c6744d7c2448afb485"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/http/zipball/d46f180359a52de8d42bf7929a6d811cf6d56500",
-                "reference": "d46f180359a52de8d42bf7929a6d811cf6d56500",
+                "url": "https://api.github.com/repos/ez-php/http/zipball/ac98e2102b1418e4b80a08c6744d7c2448afb485",
+                "reference": "ac98e2102b1418e4b80a08c6744d7c2448afb485",
                 "shasum": ""
             },
             "require": {
@@ -176,7 +176,7 @@
                 "issues": "https://github.com/ez-php/http/issues",
                 "source": "https://github.com/ez-php/http"
             },
-            "time": "2026-03-18T20:22:49+00:00"
+            "time": "2026-03-20T11:36:14+00:00"
         }
     ],
     "packages-dev": [
@@ -784,16 +784,16 @@
         },
         {
             "name": "ez-php/orm",
-            "version": "0.5.1",
+            "version": "0.5.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/orm.git",
-                "reference": "d743675711a28c7dd18016373a170a61fc693176"
+                "reference": "135a196ed226225ac9ca08ab2a7bc78f5a0baa43"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/orm/zipball/d743675711a28c7dd18016373a170a61fc693176",
-                "reference": "d743675711a28c7dd18016373a170a61fc693176",
+                "url": "https://api.github.com/repos/ez-php/orm/zipball/135a196ed226225ac9ca08ab2a7bc78f5a0baa43",
+                "reference": "135a196ed226225ac9ca08ab2a7bc78f5a0baa43",
                 "shasum": ""
             },
             "require": {
@@ -842,7 +842,7 @@
                 "issues": "https://github.com/ez-php/orm/issues",
                 "source": "https://github.com/ez-php/orm"
             },
-            "time": "2026-03-18T21:57:53+00:00"
+            "time": "2026-03-20T11:26:29+00:00"
         },
         {
             "name": "ez-php/testing",
