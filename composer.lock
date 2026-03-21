@@ -8,16 +8,16 @@
     "packages": [
         {
             "name": "ez-php/cache",
-            "version": "0.6.0",
+            "version": "0.6.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/cache.git",
-                "reference": "1f938744aadf7e8fc8e7ae52e9330da1af6167f1"
+                "reference": "53cd51d6d2421107d4dd1be673f07d269446a706"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/cache/zipball/1f938744aadf7e8fc8e7ae52e9330da1af6167f1",
-                "reference": "1f938744aadf7e8fc8e7ae52e9330da1af6167f1",
+                "url": "https://api.github.com/repos/ez-php/cache/zipball/53cd51d6d2421107d4dd1be673f07d269446a706",
+                "reference": "53cd51d6d2421107d4dd1be673f07d269446a706",
                 "shasum": ""
             },
             "require": {
@@ -62,7 +62,7 @@
                 "issues": "https://github.com/ez-php/cache/issues",
                 "source": "https://github.com/ez-php/cache"
             },
-            "time": "2026-03-21T15:34:04+00:00"
+            "time": "2026-03-21T22:36:56+00:00"
         },
         {
             "name": "ez-php/contracts",
