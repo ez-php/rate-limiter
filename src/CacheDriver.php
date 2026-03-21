@@ -16,14 +16,14 @@ use EzPhp\Cache\CacheInterface;
  *
  * @package EzPhp\RateLimiter
  */
-final class CacheDriver implements RateLimiterInterface
+final readonly class CacheDriver implements RateLimiterInterface
 {
     /**
      * CacheDriver Constructor
      *
      * @param CacheInterface $cache
      */
-    public function __construct(private readonly CacheInterface $cache)
+    public function __construct(private CacheInterface $cache)
     {
     }
 
@@ -96,7 +96,6 @@ final class CacheDriver implements RateLimiterInterface
      */
     private function readEntry(string $key): ?array
     {
-        /** @var mixed $raw */
         $raw = $this->cache->get($key);
 
         if (!is_array($raw) || !isset($raw['hits'], $raw['reset_at'])) {

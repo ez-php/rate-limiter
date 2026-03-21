@@ -21,7 +21,7 @@ use EzPhp\RateLimiter\RateLimiterInterface;
  *
  * @package EzPhp\RateLimiter\Middleware
  */
-final class ThrottleMiddleware implements MiddlewareInterface
+final readonly class ThrottleMiddleware implements MiddlewareInterface
 {
     /**
      * ThrottleMiddleware Constructor
@@ -31,9 +31,9 @@ final class ThrottleMiddleware implements MiddlewareInterface
      * @param int                  $decaySeconds Window length in seconds (default 60).
      */
     public function __construct(
-        private readonly RateLimiterInterface $limiter,
-        private readonly int $maxAttempts = 60,
-        private readonly int $decaySeconds = 60,
+        private RateLimiterInterface $limiter,
+        private int $maxAttempts = 60,
+        private int $decaySeconds = 60,
     ) {
     }
 

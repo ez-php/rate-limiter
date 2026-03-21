@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e86d679c0cb49965211a096401d7bb96",
+    "content-hash": "b814d2d186020a63b0df944e07c88567",
     "packages": [
         {
             "name": "ez-php/cache",
@@ -124,16 +124,16 @@
         },
         {
             "name": "ez-php/http",
-            "version": "0.5.2",
+            "version": "0.5.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/http.git",
-                "reference": "ac98e2102b1418e4b80a08c6744d7c2448afb485"
+                "reference": "52127b63998f7ca34ee3a2954567e06719238622"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/http/zipball/ac98e2102b1418e4b80a08c6744d7c2448afb485",
-                "reference": "ac98e2102b1418e4b80a08c6744d7c2448afb485",
+                "url": "https://api.github.com/repos/ez-php/http/zipball/52127b63998f7ca34ee3a2954567e06719238622",
+                "reference": "52127b63998f7ca34ee3a2954567e06719238622",
                 "shasum": ""
             },
             "require": {
@@ -176,7 +176,7 @@
                 "issues": "https://github.com/ez-php/http/issues",
                 "source": "https://github.com/ez-php/http"
             },
-            "time": "2026-03-20T11:36:14+00:00"
+            "time": "2026-03-21T13:51:42+00:00"
         }
     ],
     "packages-dev": [
@@ -846,16 +846,16 @@
         },
         {
             "name": "ez-php/testing",
-            "version": "0.5.0",
+            "version": "0.5.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/testing.git",
-                "reference": "d157ceacec0c0d0e249202a63da76c89b485f9de"
+                "reference": "93f411a4f8d4254261ff775324fcf13a83f35704"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/testing/zipball/d157ceacec0c0d0e249202a63da76c89b485f9de",
-                "reference": "d157ceacec0c0d0e249202a63da76c89b485f9de",
+                "url": "https://api.github.com/repos/ez-php/testing/zipball/93f411a4f8d4254261ff775324fcf13a83f35704",
+                "reference": "93f411a4f8d4254261ff775324fcf13a83f35704",
                 "shasum": ""
             },
             "require": {
@@ -904,7 +904,7 @@
                 "issues": "https://github.com/ez-php/testing/issues",
                 "source": "https://github.com/ez-php/testing"
             },
-            "time": "2026-03-18T19:02:17+00:00"
+            "time": "2026-03-21T15:18:21+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",

@@ -18,7 +18,7 @@ use RuntimeException;
  *
  * @package EzPhp\RateLimiter
  */
-final class RedisDriver implements RateLimiterInterface
+final readonly class RedisDriver implements RateLimiterInterface
 {
     /**
      * RedisDriver Constructor
@@ -27,7 +27,7 @@ final class RedisDriver implements RateLimiterInterface
      *
      * @throws RuntimeException When ext-redis is not loaded.
      */
-    public function __construct(private readonly Redis $redis)
+    public function __construct(private Redis $redis)
     {
         if (!extension_loaded('redis')) {
             throw new RuntimeException('The ext-redis extension is required to use RedisDriver.');
