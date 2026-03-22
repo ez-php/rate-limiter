@@ -25,6 +25,8 @@ final class RedisDriverTest extends TestCase
 
     private Redis $redis;
 
+    private bool $redisConnected = false;
+
     protected function setUp(): void
     {
         if (!extension_loaded('redis')) {
@@ -46,6 +48,7 @@ final class RedisDriverTest extends TestCase
             $this->markTestSkipped("Redis is not available at {$host}:{$port}.");
         }
 
+        $this->redisConnected = true;
         $this->redis->select(2);
         $this->redis->flushDB();
 
@@ -54,7 +57,7 @@ final class RedisDriverTest extends TestCase
 
     protected function tearDown(): void
     {
-        if (extension_loaded('redis')) {
+        if ($this->redisConnected) {
             $this->redis->flushDB();
         }
     }
