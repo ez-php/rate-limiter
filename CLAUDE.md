@@ -93,6 +93,11 @@ Every module under `modules/<name>/` must have:
 | `phpunit.xml` | test suite config |
 | `.php-cs-fixer.php` | code style config |
 | `.gitignore` | ignore `vendor/`, `.env`, cache |
+| `.env.example` | environment variable defaults (copy to `.env` on first run) |
+| `docker-compose.yml` | Docker Compose service definition (always `container_name: ez-php-<name>-app`) |
+| `docker/app/Dockerfile` | module Docker image (`FROM au9500/php:8.5`) |
+| `docker/app/container-start.sh` | container entrypoint: `composer install` → `sleep infinity` |
+| `docker/app/php.ini` | PHP ini overrides (`memory_limit`, `display_errors`, `xdebug.mode`) |
 | `.github/workflows/ci.yml` | standalone CI pipeline |
 | `README.md` | public documentation |
 | `tests/TestCase.php` | base test case for the module |
