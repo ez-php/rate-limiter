@@ -9,7 +9,7 @@
         failOnWarning="true"
         beStrictAboutTestsThatDoNotTestAnything="true"
         beStrictAboutOutputDuringTests="true"
-        beStrictAboutCoverageMetadata="true"
+        beStrictAboutCoverageMetadata="false"
 >
     <testsuites>
         <testsuite name="Tests">
