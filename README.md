@@ -14,11 +14,13 @@ composer require ez-php/rate-limiter
 
 ## Drivers
 
-| Driver | Persistence | External requirement |
-|---|---|---|
-| `ArrayDriver` | In-process (lost on restart) | None |
-| `RedisDriver` | Redis | `ext-redis` |
-| `CacheDriver` | Delegates to `ez-php/cache` | Any configured cache driver |
+| Driver | Persistence | External requirement | Concurrency-safe |
+|---|---|---|---|
+| `ArrayDriver` | In-process (lost on restart) | None | **No** — single-process/test use only |
+| `RedisDriver` | Redis | `ext-redis` | Yes — atomic `INCR` |
+| `CacheDriver` | Delegates to `ez-php/cache` | Any configured cache driver | Driver-dependent |
+
+> **Warning:** `ArrayDriver` uses a plain PHP array without atomic operations. Concurrent requests (e.g. PHP-FPM workers) can race and both be allowed through simultaneously. Use `RedisDriver` or `CacheDriver` in production.
 
 ---
 

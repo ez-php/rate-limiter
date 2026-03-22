@@ -11,6 +11,14 @@ namespace EzPhp\RateLimiter;
  * State is lost when the PHP process ends; suitable for tests and
  * single-process environments where persistence is not required.
  *
+ * **Single-process / single-thread only.**
+ * The store is a plain PHP array with no atomic operations. Under concurrent
+ * execution (e.g. PHP-FPM with overlapping requests) two workers can read the
+ * same counter value simultaneously, both be allowed through, and then both
+ * write back the same incremented value — effectively counting one hit instead
+ * of two. RedisDriver (INCR) and CacheDriver provide atomic operations and are
+ * safe for concurrent use.
+ *
  * @package EzPhp\RateLimiter
  */
 final class ArrayDriver implements RateLimiterInterface
