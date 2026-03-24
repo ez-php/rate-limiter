@@ -6,6 +6,7 @@ All notable changes to `ez-php/rate-limiter` are documented here.
 
 ### Documentation
 - Update CHANGELOG for v0.9.3 [skip ci] (e481b1f)
+- Update CHANGELOG for v1.0.0 [skip ci] (8dd24ac)
 
 
 ## [v0.9.3] — 2026-03-24
