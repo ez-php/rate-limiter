@@ -1,6 +1,6 @@
 {
     "name": "ez-php/rate-limiter",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Rate limiter module for the ez-php framework \u2014 array, Redis, and cache-backed drivers with ThrottleMiddleware",
     "type": "library",
     "license": "MIT",
@@ -25,18 +25,18 @@
     },
     "require": {
         "php": "^8.5",
-        "ez-php/contracts": "*",
-        "ez-php/http": "*",
-        "ez-php/cache": "*"
+        "ez-php/contracts": "^1.0",
+        "ez-php/http": "^1.0",
+        "ez-php/cache": "^1.0"
     },
     "require-dev": {
-        "ez-php/docker": "*",
+        "ez-php/docker": "^1.0",
         "phpunit/phpunit": "^13.0",
         "phpstan/phpstan": "^2.1",
         "friendsofphp/php-cs-fixer": "^3.94",
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpstan/phpstan-deprecation-rules": "^2.0",
-        "ez-php/testing-application": "*"
+        "ez-php/testing-application": "^1.0"
     },
     "autoload": {
         "psr-4": {
