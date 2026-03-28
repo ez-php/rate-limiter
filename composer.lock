@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "509e3c98509d4b1db7609e288ce19cb3",
+    "content-hash": "bbfc092dd5a0733d052150c95a716f62",
     "packages": [
         {
             "name": "ez-php/cache",
