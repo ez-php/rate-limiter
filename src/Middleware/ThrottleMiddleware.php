@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace EzPhp\RateLimiter\Middleware;
 
 use EzPhp\Contracts\MiddlewareInterface;
-use EzPhp\Http\Request;
+use EzPhp\Http\RequestInterface;
 use EzPhp\Http\Response;
 use EzPhp\RateLimiter\RateLimiterInterface;
 
@@ -38,12 +38,12 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
     }
 
     /**
-     * @param Request  $request
-     * @param callable $next
+     * @param RequestInterface $request
+     * @param callable         $next
      *
      * @return Response
      */
-    public function handle(Request $request, callable $next): Response
+    public function handle(RequestInterface $request, callable $next): Response
     {
         $key = 'throttle:' . $this->resolveIp($request);
 
@@ -60,11 +60,11 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
     }
 
     /**
-     * @param Request $request
+     * @param RequestInterface $request
      *
      * @return string
      */
-    private function resolveIp(Request $request): string
+    private function resolveIp(RequestInterface $request): string
     {
         $forwarded = $request->header('x-forwarded-for');
 
