@@ -1,6 +1,6 @@
 {
     "name": "ez-php/rate-limiter",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "description": "Rate limiter module for the ez-php framework \u2014 array, Redis, and cache-backed drivers with ThrottleMiddleware",
     "type": "library",
     "license": "MIT",
