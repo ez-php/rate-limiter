@@ -92,6 +92,18 @@ final readonly class CacheDriver implements RateLimiterInterface
     /**
      * @param string $key
      *
+     * @return int
+     */
+    public function availableIn(string $key): int
+    {
+        $entry = $this->readEntry($key);
+
+        return $entry !== null ? max(0, $entry['reset_at'] - time()) : 0;
+    }
+
+    /**
+     * @param string $key
+     *
      * @return array{hits: int, reset_at: int}|null
      */
     private function readEntry(string $key): ?array

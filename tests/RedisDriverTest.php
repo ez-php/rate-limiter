@@ -151,6 +151,39 @@ final class RedisDriverTest extends TestCase
         $this->assertFalse($this->driver->tooManyAttempts('key', 3));
     }
 
+    // ── availableIn ───────────────────────────────────────────────────────────
+
+    /**
+     * @return void
+     */
+    public function test_available_in_returns_zero_for_unknown_key(): void
+    {
+        $this->assertSame(0, $this->driver->availableIn('key'));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_available_in_returns_positive_seconds_after_first_hit(): void
+    {
+        $this->driver->attempt('key', 5, 60);
+
+        $availableIn = $this->driver->availableIn('key');
+        $this->assertGreaterThan(0, $availableIn);
+        $this->assertLessThanOrEqual(60, $availableIn);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_available_in_returns_zero_after_reset(): void
+    {
+        $this->driver->attempt('key', 5, 60);
+        $this->driver->resetAttempts('key');
+
+        $this->assertSame(0, $this->driver->availableIn('key'));
+    }
+
     // ── key isolation ─────────────────────────────────────────────────────────
 
     /**

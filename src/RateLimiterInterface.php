@@ -59,4 +59,14 @@ interface RateLimiterInterface
      * @return void
      */
     public function resetAttempts(string $key): void;
+
+    /**
+     * Return the number of seconds until the current window resets for the given key.
+     * Returns 0 if the key does not exist or has already expired.
+     *
+     * @param string $key
+     *
+     * @return int
+     */
+    public function availableIn(string $key): int;
 }

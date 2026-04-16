@@ -121,4 +121,17 @@ final class RateLimiter
     {
         self::getInstance()->driver->resetAttempts($key);
     }
+
+    /**
+     * Return the number of seconds until the current window resets for the given key.
+     * Returns 0 if the key does not exist or has already expired.
+     *
+     * @param string $key
+     *
+     * @return int
+     */
+    public static function availableIn(string $key): int
+    {
+        return self::getInstance()->driver->availableIn($key);
+    }
 }

@@ -29,11 +29,14 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
      * @param RateLimiterInterface $limiter
      * @param int                  $maxAttempts  Requests allowed per window (default 60).
      * @param int                  $decaySeconds Window length in seconds (default 60).
+     * @param string               $keyPrefix    Prefix for the rate limit key (default 'throttle').
+     *                                           Use e.g. 'rate_limit:login' for auth endpoints.
      */
     public function __construct(
         private RateLimiterInterface $limiter,
         private int $maxAttempts = 60,
         private int $decaySeconds = 60,
+        private string $keyPrefix = 'throttle',
     ) {
     }
 
@@ -45,10 +48,11 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
      */
     public function handle(RequestInterface $request, callable $next): Response
     {
-        $key = 'throttle:' . $this->resolveIp($request);
+        $key = $this->keyPrefix . ':' . $this->resolveIp($request);
 
         if (!$this->limiter->attempt($key, $this->maxAttempts, $this->decaySeconds)) {
-            return new Response('Too Many Requests', 429);
+            return (new Response('Too Many Requests', 429))
+                ->withHeader('Retry-After', (string) $this->limiter->availableIn($key));
         }
 
         /** @var Response $response */

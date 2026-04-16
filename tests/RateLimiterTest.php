@@ -153,6 +153,26 @@ final class RateLimiterTest extends TestCase
         $this->assertFalse(RateLimiter::tooManyAttempts('key', 1));
     }
 
+    /**
+     * @return void
+     */
+    public function test_availableIn_returns_zero_for_unknown_key(): void
+    {
+        $this->assertSame(0, RateLimiter::availableIn('unknown'));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_availableIn_returns_positive_seconds_after_hit(): void
+    {
+        RateLimiter::attempt('key', 5, 60);
+
+        $availableIn = RateLimiter::availableIn('key');
+        $this->assertGreaterThan(0, $availableIn);
+        $this->assertLessThanOrEqual(60, $availableIn);
+    }
+
     // ─── setInstance wires driver ─────────────────────────────────────────────
 
     /**

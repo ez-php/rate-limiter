@@ -93,6 +93,18 @@ final readonly class RedisDriver implements RateLimiterInterface
      *
      * @return int
      */
+    public function availableIn(string $key): int
+    {
+        $ttl = $this->redis->ttl($key);
+
+        return is_int($ttl) && $ttl > 0 ? $ttl : 0;
+    }
+
+    /**
+     * @param string $key
+     *
+     * @return int
+     */
     private function currentHits(string $key): int
     {
         /** @var string|false $raw */

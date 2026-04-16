@@ -91,6 +91,18 @@ final class ArrayDriver implements RateLimiterInterface
     /**
      * @param string $key
      *
+     * @return int
+     */
+    public function availableIn(string $key): int
+    {
+        $this->cleanIfExpired($key);
+
+        return isset($this->store[$key]) ? max(0, $this->store[$key]['reset_at'] - time()) : 0;
+    }
+
+    /**
+     * @param string $key
+     *
      * @return void
      */
     private function cleanIfExpired(string $key): void
