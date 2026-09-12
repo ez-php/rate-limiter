@@ -47,10 +47,18 @@ final readonly class RedisDriver implements RateLimiterInterface
             return false;
         }
 
-        $hits = $this->redis->incr($key);
+        try {
+            $hits = $this->redis->incr($key);
 
-        if ($hits === 1 || $hits === false) {
-            $this->redis->expire($key, $decaySeconds);
+            if ($hits === 1 || $hits === false) {
+                $this->redis->expire($key, $decaySeconds);
+            }
+        } catch (\RedisException) {
+            // Fail open: a Redis outage should not turn into a site-wide 500
+            // via ThrottleMiddleware. Allowing the request through un-throttled
+            // is the safer failure mode for a rate limiter (as opposed to
+            // fail-closed, which would block all traffic on a Redis hiccup).
+            return true;
         }
 
         return true;
@@ -107,8 +115,15 @@ final readonly class RedisDriver implements RateLimiterInterface
      */
     private function currentHits(string $key): int
     {
-        /** @var string|false $raw */
-        $raw = $this->redis->get($key);
+        try {
+            /** @var string|false $raw */
+            $raw = $this->redis->get($key);
+        } catch (\RedisException) {
+            // Fail open (see attempt()): treat a Redis outage as zero hits
+            // recorded rather than propagating the exception through
+            // tooManyAttempts()/remainingAttempts() into ThrottleMiddleware.
+            return 0;
+        }
 
         return $raw !== false ? (int) $raw : 0;
     }
