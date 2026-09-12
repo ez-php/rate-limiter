@@ -89,6 +89,7 @@ final class ThrottleMiddlewareTest extends TestCase
         $response = $middleware->handle($request, $next);
 
         $this->assertSame(429, $response->status());
+        self::assertInstanceOf(Response::class, $response);
         $this->assertSame('Too Many Requests', $response->body());
     }
 

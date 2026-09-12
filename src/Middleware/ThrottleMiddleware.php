@@ -7,6 +7,7 @@ namespace EzPhp\RateLimiter\Middleware;
 use EzPhp\Contracts\MiddlewareInterface;
 use EzPhp\Http\RequestInterface;
 use EzPhp\Http\Response;
+use EzPhp\Http\ResponseInterface;
 use EzPhp\RateLimiter\RateLimiterInterface;
 
 /**
@@ -44,9 +45,9 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
      * @param RequestInterface $request
      * @param callable         $next
      *
-     * @return Response
+     * @return ResponseInterface
      */
-    public function handle(RequestInterface $request, callable $next): Response
+    public function handle(RequestInterface $request, callable $next): ResponseInterface
     {
         $key = $this->keyPrefix . ':' . $this->resolveIp($request);
 
@@ -55,7 +56,7 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
                 ->withHeader('Retry-After', (string) $this->limiter->availableIn($key));
         }
 
-        /** @var Response $response */
+        /** @var ResponseInterface $response */
         $response = $next($request);
 
         return $response
