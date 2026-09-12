@@ -15,7 +15,7 @@ use Redis;
  * Reads `config/rate_limiter.php` and binds `RateLimiterInterface` to the
  * driver selected by the `rate_limiter.driver` config key.
  *
- * Supported drivers: `array` (default), `redis`, `cache`.
+ * Supported drivers: `array` (default), `file`, `redis`, `cache`.
  *
  * @package EzPhp\RateLimiter
  */
@@ -41,11 +41,25 @@ final class RateLimiterServiceProvider extends ServiceProvider
             $driver = $config->get('rate_limiter.driver', 'array');
 
             return match ($driver) {
+                'file' => $this->makeFileDriver($config),
                 'redis' => $this->makeRedisDriver($config),
                 'cache' => $this->makeCacheDriver(),
                 default => new ArrayDriver(),
             };
         });
+    }
+
+    /**
+     * @param ConfigInterface $config
+     *
+     * @return FileDriver
+     */
+    private function makeFileDriver(ConfigInterface $config): FileDriver
+    {
+        /** @var string $path */
+        $path = $config->get('rate_limiter.file.path', sys_get_temp_dir() . '/ez-php-rate-limiter');
+
+        return new FileDriver($path);
     }
 
     /**

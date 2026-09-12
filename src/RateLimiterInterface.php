@@ -9,9 +9,14 @@ namespace EzPhp\RateLimiter;
  *
  * Contract for all rate limiter backends.
  *
- * Each key tracks a sliding-window hit counter that resets after `$decaySeconds`.
+ * Each key tracks a fixed-window hit counter that resets after `$decaySeconds`.
  * The window starts when the first hit is recorded; subsequent hits within the
  * same window do not push the expiry forward.
+ *
+ * This is deliberately a fixed window, not a sliding window — see the
+ * "Design Decisions and Constraints" section of this module's CLAUDE.md.
+ * Sliding windows require per-request timestamp storage and belong in the
+ * application layer.
  *
  * @package EzPhp\RateLimiter
  */

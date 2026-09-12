@@ -17,10 +17,49 @@ composer require ez-php/rate-limiter
 | Driver | Persistence | External requirement | Concurrency-safe |
 |---|---|---|---|
 | `ArrayDriver` | In-process (lost on restart) | None | **No** — single-process/test use only |
+| `FileDriver` | Files on disk | None | Yes — `flock(LOCK_EX)`, single host |
 | `RedisDriver` | Redis | `ext-redis` | Yes — atomic `INCR` |
 | `CacheDriver` | Delegates to `ez-php/cache` | Any configured cache driver | Driver-dependent |
 
-> **Warning:** `ArrayDriver` uses a plain PHP array without atomic operations. Concurrent requests (e.g. PHP-FPM workers) can race and both be allowed through simultaneously. Use `RedisDriver` or `CacheDriver` in production.
+> **Warning:** `ArrayDriver` uses a plain PHP array without atomic operations. Concurrent requests (e.g. PHP-FPM workers) can race and both be allowed through simultaneously. Use `FileDriver`, `RedisDriver` or `CacheDriver` in production.
+
+### FileDriver
+
+For single-host deployments that have no Redis. Counters persist across requests and
+process restarts, and the whole read-modify-write in `attempt()` runs under an
+exclusive `flock()`, so concurrent PHP-FPM workers cannot both slip past the limit.
+
+```php
+use EzPhp\RateLimiter\FileDriver;
+
+$limiter = new FileDriver('/var/www/storage/rate-limiter');
+$limiter->attempt('login:1.2.3.4', 5, 60);
+```
+
+Or via config:
+
+```php
+// config/rate_limiter.php
+return [
+    'driver' => 'file',
+    'file'   => ['path' => __DIR__ . '/../storage/rate-limiter'],
+];
+```
+
+- One file per key; the key is `sha1()`-hashed, so a key containing `/` or `..` is safe.
+- **Single host only.** Locking is filesystem-level — a shared network mount across
+  hosts is not supported. Use `RedisDriver` for multi-host deployments.
+- Counter files are not swept automatically. A key is reclaimed when it is next read,
+  but keys that stop being used (e.g. one per client IP) leave files behind. Call
+  `prune()` from cron or a scheduled command if the endpoint is exposed to untrusted
+  traffic:
+
+  ```php
+  $deleted = $limiter->prune(); // removes expired counters, returns how many
+  ```
+
+  Live counters are left untouched. `prune()` is only on `FileDriver`, not on
+  `RateLimiterInterface` — the other drivers expire their own keys.
 
 ---
 

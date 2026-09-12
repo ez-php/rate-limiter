@@ -26,16 +26,20 @@ docker compose exec app composer full
 ```
 
 Executes in order:
-1. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
-2. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+1. `sync_guidelines.php --check` — fails if any `CLAUDE.md` has drifted from this file
+2. `check_test_classes.php` — fails on a duplicate test class name (all packages share the `Tests\` namespace, so a collision is a fatal error in the aggregated run, not a test failure)
+3. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
+4. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
    *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
-3. `phpunit` — all tests with coverage
+5. `phpunit` — all tests with coverage
 
 Individual commands when needed:
 ```
-composer analyse   # PHPStan only
-composer cs        # CS Fixer only
-composer test      # PHPUnit only
+composer analyse             # PHPStan only
+composer cs                  # CS Fixer only
+composer test                # PHPUnit only
+composer guidelines:check    # CLAUDE.md drift only
+composer test-classes:check  # duplicate test class names only
 ```
 
 **PHPStan:** never suppress with `@phpstan-ignore-line` — always fix the root cause.
@@ -119,7 +123,47 @@ Every module `CLAUDE.md` must follow this exact structure:
    - Testing approach and infrastructure requirements (MySQL, Redis, etc.)
    - What does **not** belong in this module
 
-### 3 — Docker scaffold
+**Do not edit part 1 by hand.** It is generated from `CODING_GUIDELINES.md` by
+`sync_guidelines.php` at the project root:
+
+```
+php sync_guidelines.php            # rewrite every out-of-sync CLAUDE.md
+php sync_guidelines.php --check    # report drift, exit 1 if any (CI / pre-commit)
+```
+
+Edit `CODING_GUIDELINES.md`, then run the script — it replaces everything before the
+`# Package:` / `# Directory:` / `# Project:` heading and preserves the hand-written
+section below it byte-for-byte. Editing a single copy only creates drift; before this
+script existed, all 40 copies had diverged.
+
+### 3 — Scaffolding a new module
+
+`make_module.php` at the project root writes the required-file set and the monorepo
+wiring in one step, wrapping `docker-init` for the Docker subset:
+
+```
+composer module:make <name> -- --description="..."
+php make_module.php <name> --description="..." --services=mysql,redis
+```
+
+`<name>` is the kebab-case package name; the namespace is derived as
+`EzPhp\<PascalCase>` unless `--namespace=` overrides it (`bignum` → `BigNum` and
+`opcache` → `OPCache` are existing exceptions the guess gets wrong).
+
+It writes `modules/<name>/` and registers the module in the four places the monorepo
+needs it — root `composer.json` (`autoload.psr-4`), `phpstan.neon`, `phpunit.xml`
+(test suite **and** coverage source), and `packages.sh` (alphabetical position).
+
+Two things stay manual on purpose:
+
+- **`CLAUDE.md` part 1** — only the `# Package:` section is generated. Run
+  `composer guidelines:sync` afterwards; baking a guidelines copy into the generator
+  would recreate the drift the sync script exists to prevent.
+- **The host-port table below** (`--services` only) — editing it marks all ~40
+  `CLAUDE.md` copies as drifted at once, so the next `composer full` would fail for
+  a brand-new module. The generator prints which ports to claim instead.
+
+### 4 — Docker scaffold
 
 Run from the new module root (requires `"ez-php/docker": "^1.0"` in `require-dev`):
 
@@ -129,35 +173,39 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
-Pass `--services` to merge MySQL/Redis service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+Pass `--services` to merge MySQL/Redis/Meilisearch service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
 ```
 vendor/bin/docker-init --services=mysql
 vendor/bin/docker-init --services=redis
+vendor/bin/docker-init --services=meilisearch
 vendor/bin/docker-init --services=mysql,redis
 ```
 
 After scaffolding:
 
-1. Adapt `docker-compose.yml` — add or remove services (MySQL, Redis) as needed
+1. Adapt `docker-compose.yml` — add or remove services (MySQL, Redis, Meilisearch) as needed
 2. Adapt `.env.example` — fill in connection defaults matching the services above
 3. Assign a unique host port for each exposed service (see table below)
 
 **Allocated host ports:**
 
-| Package | `DB_HOST_PORT` (MySQL) | `REDIS_PORT` |
-|---|---|---|
-| root (`ez-php-project`) | 3306 | 6379 |
-| `ez-php/framework` | 3307 | — |
-| `ez-php/orm` | 3309 | — |
-| `ez-php/cache` | — | 6380 |
-| `ez-php/queue` | 3310 | 6381 |
-| `ez-php/rate-limiter` | — | 6382 |
-| **next free** | **3311** | **6383** |
+| Package | `DB_HOST_PORT` (MySQL) | `REDIS_PORT` | `MEILISEARCH_PORT` |
+|---|---|---|---|
+| root (`ez-php-project`) | 3306 | 6379 | 7700 |
+| `ez-php/framework` | 3307 | — | — |
+| `ez-php/orm` | 3309 | — | — |
+| `ez-php/cache` | — | 6380 | — |
+| `ez-php/queue` | 3310 | 6381 | — |
+| `ez-php/rate-limiter` | — | 6382 | — |
+| `ez-php/search` | — | — | 7701 |
+| **next free** | **3311** | **6383** | **7702** |
 
 Only set a port for services the module actually uses. Modules without external services need no port config.
 
-### 4 — Monorepo scripts
+> The `MEILISEARCH_PORT` column is the **host** port. Inside a Compose network the service is always reachable at `http://meilisearch:7700` regardless of the host mapping — only publish-side ports need to be unique.
+
+### 5 — Monorepo scripts
 
 `packages.sh` at the project root is the **central package registry**. Both `push_all.sh` and `update_all.sh` source it — the package list lives in exactly one place.
 
@@ -179,6 +227,7 @@ src/
 ├── ArrayDriver.php                    — In-process PHP array; per-key decay window; no external deps
 ├── RedisDriver.php                    — Redis backend via ext-redis; INCR + EXPIRE per decay window
 ├── CacheDriver.php                    — Delegates to ez-php/cache CacheInterface; stores {hits, reset_at} array
+├── FileDriver.php                     — File-backed counters; flock(LOCK_EX) read-modify-write; single-host persistence
 ├── RateLimiter.php                    — Static facade backed by a managed singleton; falls back to ArrayDriver
 ├── RateLimiterServiceProvider.php     — Binds RateLimiterInterface per config; sets RateLimiter singleton in boot()
 └── Middleware/
@@ -189,6 +238,7 @@ tests/
 ├── ArrayDriverTest.php                — Full contract tests; no external infrastructure
 ├── RedisDriverTest.php                — Full contract tests; requires live Redis; skipped without ext-redis
 ├── CacheDriverTest.php                — Full contract tests; uses ez-php/cache ArrayDriver as backing store
+├── RateLimiterFileDriverTest.php      — Full contract tests; temp directory; name-prefixed to avoid a class clash
 ├── RateLimiterTest.php                — Covers facade: instance management, all four static methods
 └── Middleware/
     └── ThrottleMiddlewareTest.php     — Pass-through, 429, headers, IP resolution via ArrayDriver
@@ -265,7 +315,8 @@ Reads `config/rate_limiter.php` and binds `RateLimiterInterface` lazily to the m
 
 | Config key | Type | Default | Meaning |
 |---|---|---|---|
-| `rate_limiter.driver` | string | `'array'` | `'array'`, `'redis'`, or `'cache'` |
+| `rate_limiter.driver` | string | `'array'` | `'array'`, `'file'`, `'redis'`, or `'cache'` |
+| `rate_limiter.file.path` | string | `sys_get_temp_dir().'/ez-php-rate-limiter'` | Counter directory (file driver only) |
 | `rate_limiter.redis.host` | string | `'127.0.0.1'` | Redis hostname |
 | `rate_limiter.redis.port` | int | `6379` | Redis port |
 | `rate_limiter.redis.database` | int | `0` | Redis database index |
@@ -279,6 +330,10 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 - **`attempt()` does not count rejected hits** — A call that returns false (limit already reached) does not increment the counter. The counter only advances when a request is actually allowed through. This makes the hit count an accurate record of served requests, not attempted ones.
 - **Fixed decay window from first hit** — The window starts on the first `attempt()` call and ends `$decaySeconds` later regardless of further activity. This is a fixed window, not a sliding window. Sliding windows require storing per-request timestamps and are more expensive. Fixed windows are simpler and sufficient for most throttle use cases.
 - **`RedisDriver` uses INCR + conditional EXPIRE** — `INCR` is atomic in Redis. Setting `EXPIRE` only on the first hit (when the counter returns 1) avoids resetting the window on every request. If `INCR` returns `false` (should not happen in practice), the expiry is still set defensively.
+- **`FileDriver` holds an exclusive lock across the whole read-modify-write** — `attempt()` opens the counter file with `fopen('c+')`, takes `flock(LOCK_EX)`, then reads, decides and writes before releasing. This is what makes it safe under PHP-FPM: a non-locking implementation (like `ArrayDriver`, or a naive `file_put_contents`) lets two workers read the same count, both pass the check, and both write the same value — so the limit would never trip. Read-only methods take `LOCK_SH`.
+- **`FileDriver` hashes the key into the filename** — Throttle keys embed the client IP and arbitrary caller-supplied text, which may contain `/` or `..`. `sha1($key)` gives a fixed, filesystem-safe name and makes traversal impossible by construction.
+- **`FileDriver::prune()` is opt-in, not automatic** — An expired key is reclaimed when it is next read, but nothing reclaims keys that stop being used. Throttle keys are `throttle:<client-ip>`, so a public endpoint accumulates one `.limit` file per unique IP — driven by untrusted input, in exactly the single-host-without-Redis deployment this driver targets. `prune()` deletes every counter whose window has expired (and any file whose contents are unreadable, which expiry can never reclaim) and returns the count. It is not called from the hot path: that would cost a directory scan per request. Run it from `schedule:run` or cron. It is deliberately **not** on `RateLimiterInterface` — the other drivers have nothing to prune, since Redis and the cache expire their own keys and `ArrayDriver` dies with the process. Live counters are re-checked under `LOCK_EX` and left alone; deleting one would hand that client a fresh window.
+- **`FileDriver` is single-host** — Locking is filesystem-level, so a shared network mount across hosts is not a supported configuration. Use `RedisDriver` for multi-host deployments.
 - **`CacheDriver` computes remaining TTL** — On every write, the TTL is computed as `max(1, reset_at - time())`. This ensures the cache entry expires at the same moment as the rate limit window, without resetting the window on each hit.
 - **`ThrottleMiddleware` does not call `$next` on throttle** — The 429 response is returned immediately, saving downstream middleware and controller execution. The response body is intentionally minimal (`Too Many Requests`); consumers requiring a JSON body should extend or wrap this middleware.
 - **IP from `X-Forwarded-For` is not trusted blindly** — Only the first value is used (the client IP in standard proxy setups). This can be spoofed if the load balancer does not strip the header. Applications behind untrusted proxies should configure trusted proxy handling at the infrastructure level.
@@ -291,6 +346,7 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 - **`ArrayDriverTest`** — No external infrastructure. Tests cover the full interface: attempt (allow, allow-up-to-max, deny), tooManyAttempts, remainingAttempts, resetAttempts, key isolation.
 - **`RedisDriverTest`** — Requires a live Redis instance (available via Docker). Uses Redis database `2` to avoid colliding with application data. Tests are automatically skipped when `ext-redis` is not loaded. `flushDB()` is called in `setUp` and `tearDown`.
 - **`CacheDriverTest`** — Uses `ez-php/cache`'s `ArrayDriver` as the backing store — no external infrastructure needed. Covers the same contract surface as `ArrayDriverTest`.
+- **`RateLimiterFileDriverTest`** — Uses a temp directory cleaned in `tearDown()`; no external infrastructure. Covers the same contract surface as `ArrayDriverTest`, plus persistence across driver instances and key isolation for filesystem-unsafe keys. **The class is named `RateLimiterFileDriverTest`, not `FileDriverTest`, deliberately:** the root `phpunit.xml` aggregates every module's tests and they all share the `Tests\` namespace, so a plain `Tests\FileDriverTest` collides with `modules/logging`'s at load time — a fatal error, not a test failure. Do not "tidy" the prefix away.
 - **`ThrottleMiddlewareTest`** — Uses `ArrayDriver` directly; no Docker required. Covers: pass-through, 429 on throttle, rate-limit headers, next-not-called-when-throttled, per-IP isolation, `X-Forwarded-For` preference over `REMOTE_ADDR`.
 - **`#[UsesClass]` required** — `beStrictAboutCoverageMetadata=true` is set in `phpunit.xml`. Declare indirectly used classes with `#[UsesClass]`.
 
