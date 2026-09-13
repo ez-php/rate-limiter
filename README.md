@@ -80,6 +80,31 @@ $limiter->resetAttempts('login:' . $ip);        // clear the counter (e.g. on su
 
 ---
 
+## Using the facade
+
+`RateLimiter` mirrors `RateLimiterInterface` as static methods, backed by a managed
+singleton set during `RateLimiterServiceProvider::boot()`. Without a service provider
+it falls back to an in-memory `ArrayDriver`, so it's safe to call in code paths that
+run before the provider boots (e.g. early tests).
+
+```php
+use EzPhp\RateLimiter\RateLimiter;
+
+if (!RateLimiter::attempt('login:' . $ip, maxAttempts: 5, decaySeconds: 60)) {
+    $retryIn = RateLimiter::availableIn('login:' . $ip);
+    // respond 429, e.g. with a Retry-After: $retryIn header
+}
+
+RateLimiter::tooManyAttempts('login:' . $ip, 5);
+RateLimiter::remainingAttempts('login:' . $ip, 5);
+RateLimiter::resetAttempts('login:' . $ip);
+```
+
+In tests, call `RateLimiter::resetInstance()` in `tearDown()` to clear the static
+singleton between test cases.
+
+---
+
 ## ThrottleMiddleware
 
 Plug into the framework middleware pipeline for per-IP global or per-route throttling:
@@ -134,6 +159,7 @@ interface RateLimiterInterface
     public function tooManyAttempts(string $key, int $maxAttempts): bool;
     public function remainingAttempts(string $key, int $maxAttempts): int;
     public function resetAttempts(string $key): void;
+    public function availableIn(string $key): int; // seconds until the window resets; 0 if expired/absent
 }
 ```
 
