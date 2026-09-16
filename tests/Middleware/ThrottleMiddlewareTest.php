@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Middleware;
 
 use EzPhp\Http\Request;
+use EzPhp\Http\RequestInterface;
 use EzPhp\Http\Response;
 use EzPhp\RateLimiter\ArrayDriver;
 use EzPhp\RateLimiter\Middleware\ThrottleMiddleware;
@@ -232,6 +233,32 @@ final class ThrottleMiddlewareTest extends TestCase
         // request with REMOTE_ADDR only → different key → still passes
         $plain = $this->makeRequest(server: ['REMOTE_ADDR' => '10.0.0.1']);
         $this->assertSame(200, $middleware->handle($plain, $next)->status());
+    }
+
+    // ── custom key resolver ──────────────────────────────────────────────────
+
+    /**
+     * @return void
+     */
+    public function test_custom_key_resolver_overrides_ip_based_key(): void
+    {
+        $middleware = new ThrottleMiddleware(
+            $this->limiter,
+            1,
+            60,
+            keyResolver: function (RequestInterface $r): string {
+                $userId = $r->header('x-user-id');
+
+                return 'user:' . (is_string($userId) ? $userId : '');
+            },
+        );
+        $requestA = $this->makeRequest(headers: ['x-user-id' => '42'], server: ['REMOTE_ADDR' => '1.1.1.1']);
+        $requestB = $this->makeRequest(headers: ['x-user-id' => '42'], server: ['REMOTE_ADDR' => '2.2.2.2']);
+        $next = fn (Request $r): Response => new Response('OK', 200);
+
+        // same user id, different IPs → same bucket, second request throttled
+        $this->assertSame(200, $middleware->handle($requestA, $next)->status());
+        $this->assertSame(429, $middleware->handle($requestB, $next)->status());
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

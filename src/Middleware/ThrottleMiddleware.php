@@ -13,9 +13,10 @@ use EzPhp\RateLimiter\RateLimiterInterface;
 /**
  * Class ThrottleMiddleware
  *
- * HTTP middleware that enforces a per-IP request rate limit.
- * The key is derived from the client IP: `X-Forwarded-For` (first entry) is
- * preferred; falls back to `REMOTE_ADDR` from the server bag.
+ * HTTP middleware that enforces a per-key request rate limit.
+ * By default the key is derived from the client IP: `X-Forwarded-For` (first
+ * entry) is preferred; falls back to `REMOTE_ADDR` from the server bag. Pass
+ * a `$keyResolver` to throttle by something else (e.g. authenticated user id).
  *
  * On throttle: returns HTTP 429 with a plain-text body.
  * On pass:     adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers.
@@ -27,17 +28,21 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
     /**
      * ThrottleMiddleware Constructor
      *
-     * @param RateLimiterInterface $limiter
-     * @param int                  $maxAttempts  Requests allowed per window (default 60).
-     * @param int                  $decaySeconds Window length in seconds (default 60).
-     * @param string               $keyPrefix    Prefix for the rate limit key (default 'throttle').
-     *                                           Use e.g. 'rate_limit:login' for auth endpoints.
+     * @param RateLimiterInterface        $limiter
+     * @param int                         $maxAttempts  Requests allowed per window (default 60).
+     * @param int                         $decaySeconds Window length in seconds (default 60).
+     * @param string                      $keyPrefix    Prefix for the rate limit key (default 'throttle').
+     *                                                   Use e.g. 'rate_limit:login' for auth endpoints.
+     * @param (\Closure(RequestInterface): string)|null $keyResolver Overrides the default IP-based key
+     *                                                   derivation; receives the request and returns the
+     *                                                   part of the key appended after `$keyPrefix`.
      */
     public function __construct(
         private RateLimiterInterface $limiter,
         private int $maxAttempts = 60,
         private int $decaySeconds = 60,
         private string $keyPrefix = 'throttle',
+        private ?\Closure $keyResolver = null,
     ) {
     }
 
@@ -49,7 +54,11 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
      */
     public function handle(RequestInterface $request, callable $next): ResponseInterface
     {
-        $key = $this->keyPrefix . ':' . $this->resolveIp($request);
+        $keySuffix = $this->keyResolver !== null
+            ? ($this->keyResolver)($request)
+            : $this->resolveIp($request);
+
+        $key = $this->keyPrefix . ':' . $keySuffix;
 
         if (!$this->limiter->attempt($key, $this->maxAttempts, $this->decaySeconds)) {
             return (new Response('Too Many Requests', 429))
