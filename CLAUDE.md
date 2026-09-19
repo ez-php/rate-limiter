@@ -256,7 +256,8 @@ Request throttling for ez-php applications — three backend drivers, a unified 
 src/
 ├── RateLimiterInterface.php           — attempt/tooManyAttempts/remainingAttempts/resetAttempts contract
 ├── ArrayDriver.php                    — In-process PHP array; per-key decay window; no external deps
-├── RedisDriver.php                    — Redis backend via ext-redis; INCR + EXPIRE per decay window
+├── RedisDriver.php                    — Redis backend via ext-redis; INCR + EXPIRE per decay window (fixed window)
+├── SlidingWindowRedisDriver.php       — Redis sorted-set backend via ext-redis; ZADD + ZREMRANGEBYSCORE (true sliding window)
 ├── CacheDriver.php                    — Delegates to ez-php/cache CacheInterface; stores {hits, reset_at} array
 ├── FileDriver.php                     — File-backed counters; flock(LOCK_EX) read-modify-write; single-host persistence
 ├── RateLimiter.php                    — Static facade backed by a managed singleton; falls back to ArrayDriver
@@ -268,6 +269,7 @@ tests/
 ├── TestCase.php                       — Base PHPUnit test case
 ├── ArrayDriverTest.php                — Full contract tests; no external infrastructure
 ├── RedisDriverTest.php                — Full contract tests; requires live Redis; skipped without ext-redis
+├── SlidingWindowRedisDriverTest.php   — Full contract tests + window-boundary pruning; requires live Redis; skipped without ext-redis; shares database 2 with RedisDriverTest
 ├── CacheDriverTest.php                — Full contract tests; uses ez-php/cache ArrayDriver as backing store
 ├── RateLimiterFileDriverTest.php      — Full contract tests; temp directory; name-prefixed to avoid a class clash
 ├── RateLimiterTest.php                — Covers facade: instance management, all four static methods
@@ -315,6 +317,18 @@ Redis store via `ext-redis`. Uses `INCR` for atomic counter increments and `EXPI
 
 ---
 
+### SlidingWindowRedisDriver (`src/SlidingWindowRedisDriver.php`)
+
+Redis sorted set via `ext-redis`, one member per hit (score = `microtime(true)` at the time of the hit, member = `"{timestamp}:{4 random bytes}"` for uniqueness under high-frequency hits at the same timestamp). `attempt()`:
+
+1. `ZREMRANGEBYSCORE key -inf (now - decaySeconds)` — prunes members outside the current window.
+2. `ZCARD key` — if `>= maxAttempts`, returns `false` without recording a hit (same "rejected hits aren't counted" contract as every other driver).
+3. `ZADD key now member` + `EXPIRE key decaySeconds` — records the hit and refreshes the key's own TTL (a safety net so an abandoned key doesn't linger forever; the sliding-window pruning in step 1 is what actually enforces the window).
+
+`tooManyAttempts()`/`remainingAttempts()`/`availableIn()` call `ZCARD`/`TTL` directly, without re-pruning — `RateLimiterInterface` doesn't pass `$decaySeconds` to those methods, so they can only report against whatever `attempt()` last pruned. `ThrottleMiddleware` already calls them immediately after `attempt()`, so this is accurate in the actual call pattern; a caller that queries long after the last `attempt()` sees a possibly-stale count until the next `attempt()` re-prunes. `resetAttempts()` calls `DEL key`. Throws `RuntimeException` at construction if `ext-redis` is not loaded — same guard as `RedisDriver`.
+
+---
+
 ### CacheDriver (`src/CacheDriver.php`)
 
 Delegates to any `CacheInterface` (Array, File, Redis). Each entry is stored as `['hits' => int, 'reset_at' => int]`. The cache TTL is computed as remaining seconds to `reset_at`, so the entry expires together with the window.
@@ -359,7 +373,7 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 ## Design Decisions and Constraints
 
 - **`attempt()` does not count rejected hits** — A call that returns false (limit already reached) does not increment the counter. The counter only advances when a request is actually allowed through. This makes the hit count an accurate record of served requests, not attempted ones.
-- **Fixed decay window from first hit** — The window starts on the first `attempt()` call and ends `$decaySeconds` later regardless of further activity. This is a fixed window, not a sliding window. Sliding windows require storing per-request timestamps and are more expensive. Fixed windows are simpler and sufficient for most throttle use cases.
+- **Fixed decay window from first hit (`ArrayDriver`/`RedisDriver`/`CacheDriver`/`FileDriver`)** — The window starts on the first `attempt()` call and ends `$decaySeconds` later regardless of further activity. Sliding windows require storing per-request timestamps and are more expensive; fixed windows are simpler and sufficient for most throttle use cases. `SlidingWindowRedisDriver` is the one exception — a fifth interchangeable driver behind the same `RateLimiterInterface`, for callers that specifically need true sliding-window semantics (e.g. "no more than N requests in *any* trailing 60-second window", not "N requests per calendar-aligned 60-second bucket") and accept the extra Redis cost (a sorted set with one member per hit, pruned on every `attempt()`, instead of a single counter).
 - **`RedisDriver` uses INCR + conditional EXPIRE** — `INCR` is atomic in Redis. Setting `EXPIRE` only on the first hit (when the counter returns 1) avoids resetting the window on every request. If `INCR` returns `false` (should not happen in practice), the expiry is still set defensively.
 - **`FileDriver` holds an exclusive lock across the whole read-modify-write** — `attempt()` opens the counter file with `fopen('c+')`, takes `flock(LOCK_EX)`, then reads, decides and writes before releasing. This is what makes it safe under PHP-FPM: a non-locking implementation (like `ArrayDriver`, or a naive `file_put_contents`) lets two workers read the same count, both pass the check, and both write the same value — so the limit would never trip. Read-only methods take `LOCK_SH`.
 - **`FileDriver` hashes the key into the filename** — Throttle keys embed the client IP and arbitrary caller-supplied text, which may contain `/` or `..`. `sha1($key)` gives a fixed, filesystem-safe name and makes traversal impossible by construction.
@@ -388,7 +402,7 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 | Concern | Where it belongs |
 |---|---|
 | IP trust / proxy configuration | Application infrastructure (Nginx, load balancer) |
-| Sliding window rate limiting | Application layer (requires per-request timestamp storage) |
+| Sliding window rate limiting for non-Redis backends | `SlidingWindowRedisDriver` covers the Redis case; an `ArrayDriver`/`FileDriver` equivalent would need the same per-request timestamp storage this module has otherwise avoided for simplicity — application layer if needed |
 | Login brute-force protection (specific logic) | Application layer, using this module's interface |
 | API key quotas | Application layer (different key scheme + persistence) |
 | Circuit breaker | Application layer or a dedicated module |

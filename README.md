@@ -18,7 +18,8 @@ composer require ez-php/rate-limiter
 |---|---|---|---|
 | `ArrayDriver` | In-process (lost on restart) | None | **No** — single-process/test use only |
 | `FileDriver` | Files on disk | None | Yes — `flock(LOCK_EX)`, single host |
-| `RedisDriver` | Redis | `ext-redis` | Yes — atomic `INCR` |
+| `RedisDriver` | Redis | `ext-redis` | Yes — atomic `INCR`, fixed window |
+| `SlidingWindowRedisDriver` | Redis | `ext-redis` | Yes — sorted set, true sliding window |
 | `CacheDriver` | Delegates to `ez-php/cache` | Any configured cache driver | Driver-dependent |
 
 > **Warning:** `ArrayDriver` uses a plain PHP array without atomic operations. Concurrent requests (e.g. PHP-FPM workers) can race and both be allowed through simultaneously. Use `FileDriver`, `RedisDriver` or `CacheDriver` in production.
@@ -60,6 +61,30 @@ return [
 
   Live counters are left untouched. `prune()` is only on `FileDriver`, not on
   `RateLimiterInterface` — the other drivers expire their own keys.
+
+### SlidingWindowRedisDriver
+
+`RedisDriver`'s fixed window resets in one block: a limit of 5/60s allows 5 requests at
+`t=0.9s` and another 5 at `t=1.0s` (two different windows), i.e. 10 requests in ~0.1s at a
+window boundary. `SlidingWindowRedisDriver` avoids that by tracking every hit's timestamp
+in a Redis sorted set and pruning anything older than the trailing `decaySeconds` window on
+every call — "no more than N requests in *any* trailing 60 seconds", not "N requests per
+calendar-aligned 60-second bucket". The cost: one sorted-set member per hit instead of a
+single counter, and every `attempt()` does a range-delete before the count check.
+
+```php
+use EzPhp\RateLimiter\SlidingWindowRedisDriver;
+use Redis;
+
+$redis = new Redis();
+$redis->connect('127.0.0.1', 6379);
+
+$limiter = new SlidingWindowRedisDriver($redis);
+$limiter->attempt('login:1.2.3.4', 5, 60); // no more than 5 hits in any trailing 60s
+```
+
+Same `RateLimiterInterface` contract as every other driver — drop-in replacement for
+`RedisDriver` wherever the fixed-window/sliding-window distinction matters.
 
 ---
 
