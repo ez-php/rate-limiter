@@ -163,12 +163,12 @@ Create `config/rate_limiter.php`:
 ```php
 <?php
 return [
-    'driver' => env('RATE_LIMITER_DRIVER', 'array'), // array | redis | cache
+    'driver' => getenv('RATE_LIMITER_DRIVER') ?: 'array', // array | redis | cache
 
     'redis' => [
-        'host'     => env('REDIS_HOST', '127.0.0.1'),
-        'port'     => (int) env('REDIS_PORT', 6379),
-        'database' => (int) env('REDIS_RATE_LIMITER_DB', 0),
+        'host'     => getenv('REDIS_HOST') ?: '127.0.0.1',
+        'port'     => (int) (getenv('REDIS_PORT') ?: 6379),
+        'database' => (int) (getenv('REDIS_RATE_LIMITER_DB') ?: 0),
     ],
 ];
 ```
