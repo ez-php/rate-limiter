@@ -148,9 +148,11 @@ php make_module.php <name> --description="..." --services=mysql,redis
 ```
 
 `<name>` is the kebab-case package name; the namespace is derived as
-`EzPhp\<PascalCase>` unless `--namespace=` overrides it (`bignum` → `BigNum`,
-`opcache` → `OPCache`, and `dotenv` → `Env` are existing exceptions the guess
-gets wrong; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
+`EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
+overrides it. Existing exceptions the guess gets wrong: `bignum` → `BigNum`,
+`dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `oauth` → `OAuth`,
+`opcache` → `OPCache`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
+`websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
 `webauthn-metadata` → `WebauthnMetadata` and `metrics-statsd` → `MetricsStatsd` are
 intentional lower-case-word namespaces, and `testing-application` shares `EzPhp\Testing\`
 with `testing`).
@@ -170,17 +172,21 @@ stub is written only if the submodule doesn't already ship one, so
 `composer guidelines:sync` has a `# Package:` heading to anchor part 1 against.
 
 It writes `modules/<name>/` and registers the module in the four places the monorepo
-needs it — root `composer.json` (`autoload.psr-4`), `phpstan.neon`, `phpunit.xml`
-(test suite **and** coverage source), and `packages.sh` (alphabetical position).
+needs it — root `composer.json` (`autoload.psr-4` **and** the shared
+`autoload-dev` `Tests\` directory list), `phpstan.neon`, `phpunit.xml` (test suite
+**and** coverage source), and `packages.sh` (alphabetical position) — in both
+generated and `--repo` mode.
 
 Two things stay manual on purpose:
 
 - **`CLAUDE.md` part 1** — only the `# Package:` section is generated. Run
   `composer guidelines:sync` afterwards; baking a guidelines copy into the generator
   would recreate the drift the sync script exists to prevent.
-- **The host-port table below** (`--services` only) — editing it marks every
-  `CLAUDE.md` copy as drifted at once, so the next `composer full` would fail for
-  a brand-new module. The generator prints which ports to claim instead.
+- **The host-port table below** (`--services` only) — claim the "next free" row by
+  editing the table in `CODING_GUIDELINES.md` (never in a `CLAUDE.md` copy) and run
+  `composer guidelines:sync` in the same change. Editing it drifts every `CLAUDE.md`
+  until the sync runs, which is why the generator only reminds you instead of doing
+  it. Skipping the edit leaves "next free" stale, so the next module collides.
 
 ### 4 — Docker scaffold
 
@@ -348,10 +354,10 @@ Implements `MiddlewareInterface`. Resolves the client IP, calls `attempt()`, and
 - Returns **HTTP 429** (`Too Many Requests`) immediately — `$next` is not called.
 - Calls `$next($request)`, then adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers to the response.
 
-**IP resolution order:**
-1. `X-Forwarded-For` header — first comma-separated value, trimmed
-2. `REMOTE_ADDR` server variable
-3. Fallback: `'unknown'`
+**IP resolution** — delegated to `RequestInterface::ip($trustedProxies)`:
+1. `REMOTE_ADDR`, unless it is listed in the constructor's `$trustedProxies`
+2. behind a trusted proxy: the first untrusted `X-Forwarded-For` hop, walking from the right
+3. Fallback: `'unknown'` when the server bag has no `REMOTE_ADDR`
 
 The throttle key is `'throttle:' . $ip`.
 
@@ -384,7 +390,7 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 - **`FileDriver` is single-host** — Locking is filesystem-level, so a shared network mount across hosts is not a supported configuration. Use `RedisDriver` for multi-host deployments.
 - **`CacheDriver` computes remaining TTL** — On every write, the TTL is computed as `max(1, reset_at - time())`. This ensures the cache entry expires at the same moment as the rate limit window, without resetting the window on each hit.
 - **`ThrottleMiddleware` does not call `$next` on throttle** — The 429 response is returned immediately, saving downstream middleware and controller execution. The response body is intentionally minimal (`Too Many Requests`); consumers requiring a JSON body should extend or wrap this middleware.
-- **IP from `X-Forwarded-For` is not trusted blindly** — Only the first value is used (the client IP in standard proxy setups). This can be spoofed if the load balancer does not strip the header. Applications behind untrusted proxies should configure trusted proxy handling at the infrastructure level.
+- **`X-Forwarded-For` is ignored unless the peer is a trusted proxy** — With no `$trustedProxies` the key is `REMOTE_ADDR`. Honouring the header unconditionally let any client get a fresh bucket per request (random header → limit bypass) or exhaust a victim's bucket by forging the victim's IP. Behind a proxy, pass its address(es); the leftmost header entry is never used blindly because clients control it.
 - **`ez-php/cache` is a hard `require`** — `CacheDriver` is a first-class backend, not an optional add-on. Requiring `ez-php/cache` ensures all three drivers are always available without conditional autoloading. The module is lightweight (no heavy deps).
 
 ---
@@ -395,7 +401,7 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 - **`RedisDriverTest`** — Requires a live Redis instance (available via Docker). Uses Redis database `2` to avoid colliding with application data. Tests are automatically skipped when `ext-redis` is not loaded. `flushDB()` is called in `setUp` and `tearDown`.
 - **`CacheDriverTest`** — Uses `ez-php/cache`'s `ArrayDriver` as the backing store — no external infrastructure needed. Covers the same contract surface as `ArrayDriverTest`.
 - **`RateLimiterFileDriverTest`** — Uses a temp directory cleaned in `tearDown()`; no external infrastructure. Covers the same contract surface as `ArrayDriverTest`, plus persistence across driver instances and key isolation for filesystem-unsafe keys. **The class is named `RateLimiterFileDriverTest`, not `FileDriverTest`, deliberately:** the root `phpunit.xml` aggregates every module's tests and they all share the `Tests\` namespace, so a plain `Tests\FileDriverTest` collides with `modules/logging`'s at load time — a fatal error, not a test failure. Do not "tidy" the prefix away.
-- **`ThrottleMiddlewareTest`** — Uses `ArrayDriver` directly; no Docker required. Covers: pass-through, 429 on throttle, rate-limit headers, next-not-called-when-throttled, per-IP isolation, `X-Forwarded-For` preference over `REMOTE_ADDR`.
+- **`ThrottleMiddlewareTest`** — Uses `ArrayDriver` directly; no Docker required. Covers: pass-through, 429 on throttle, rate-limit headers, next-not-called-when-throttled, per-IP isolation, `X-Forwarded-For` honoured only behind a trusted proxy, forged headers from untrusted peers neither bypass the limit nor consume a victim's bucket.
 - **`#[UsesClass]` required** — `beStrictAboutCoverageMetadata=true` is set in `phpunit.xml`. Declare indirectly used classes with `#[UsesClass]`.
 
 ---

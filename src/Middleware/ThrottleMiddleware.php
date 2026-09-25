@@ -14,9 +14,13 @@ use EzPhp\RateLimiter\RateLimiterInterface;
  * Class ThrottleMiddleware
  *
  * HTTP middleware that enforces a per-key request rate limit.
- * By default the key is derived from the client IP: `X-Forwarded-For` (first
- * entry) is preferred; falls back to `REMOTE_ADDR` from the server bag. Pass
- * a `$keyResolver` to throttle by something else (e.g. authenticated user id).
+ * By default the key is the client IP from `RequestInterface::ip()`: the
+ * connecting `REMOTE_ADDR`, unless it is one of `$trustedProxies`, in which
+ * case the first untrusted `X-Forwarded-For` hop (walking from the right) is
+ * used. Without trusted proxies the header is ignored — otherwise any client
+ * could bypass the limit with a random header, or exhaust a victim's bucket by
+ * forging the victim's IP. Pass a `$keyResolver` to throttle by something else
+ * (e.g. authenticated user id).
  *
  * On throttle: returns HTTP 429 with a plain-text body.
  * On pass:     adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers.
@@ -36,6 +40,9 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
      * @param (\Closure(RequestInterface): string)|null $keyResolver Overrides the default IP-based key
      *                                                   derivation; receives the request and returns the
      *                                                   part of the key appended after `$keyPrefix`.
+     * @param list<string>                $trustedProxies IP addresses of reverse proxies whose
+     *                                                   `X-Forwarded-For` header is honoured. Empty (default):
+     *                                                   the header is ignored and `REMOTE_ADDR` is the key.
      */
     public function __construct(
         private RateLimiterInterface $limiter,
@@ -43,6 +50,7 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
         private int $decaySeconds = 60,
         private string $keyPrefix = 'throttle',
         private ?\Closure $keyResolver = null,
+        private array $trustedProxies = [],
     ) {
     }
 
@@ -51,6 +59,8 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
      * @param callable         $next
      *
      * @return ResponseInterface
+     *
+     * @phpstan-impure
      */
     public function handle(RequestInterface $request, callable $next): ResponseInterface
     {
@@ -74,20 +84,16 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
     }
 
     /**
+     * Client IP used as the default key; `unknown` when the server bag has none.
+     *
      * @param RequestInterface $request
      *
      * @return string
      */
     private function resolveIp(RequestInterface $request): string
     {
-        $forwarded = $request->header('x-forwarded-for');
+        $ip = $request->ip($this->trustedProxies);
 
-        if (is_string($forwarded) && $forwarded !== '') {
-            return trim(explode(',', $forwarded)[0]);
-        }
-
-        $remote = $request->server('REMOTE_ADDR');
-
-        return is_string($remote) ? $remote : 'unknown';
+        return $ip !== '' ? $ip : 'unknown';
     }
 }

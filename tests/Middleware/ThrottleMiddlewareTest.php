@@ -129,9 +129,13 @@ final class ThrottleMiddlewareTest extends TestCase
         $next = fn (Request $r): Response => new Response('OK', 200);
 
         // Exhaust the 3-attempt window
-        $this->assertSame(200, $middleware->handle($request, $next)->status());
-        $this->assertSame(200, $middleware->handle($request, $next)->status());
-        $this->assertSame(200, $middleware->handle($request, $next)->status());
+        $statuses = [];
+
+        for ($i = 0; $i < 3; $i++) {
+            $statuses[] = $middleware->handle($request, $next)->status();
+        }
+
+        $this->assertSame([200, 200, 200], $statuses);
 
         // All further requests within the window are blocked with Retry-After
         $first429 = $middleware->handle($request, $next);
@@ -215,11 +219,11 @@ final class ThrottleMiddlewareTest extends TestCase
     /**
      * @return void
      */
-    public function test_prefers_x_forwarded_for_over_remote_addr(): void
+    public function test_uses_x_forwarded_for_only_behind_a_trusted_proxy(): void
     {
-        $middleware = new ThrottleMiddleware($this->limiter, 1, 60);
+        $middleware = new ThrottleMiddleware($this->limiter, 1, 60, trustedProxies: ['10.0.0.1']);
         $request = $this->makeRequest(
-            headers: ['x-forwarded-for' => '5.6.7.8, 10.0.0.1'],
+            headers: ['x-forwarded-for' => '5.6.7.8'],
             server: ['REMOTE_ADDR' => '10.0.0.1'],
         );
         $next = fn (Request $r): Response => new Response('OK', 200);
@@ -233,6 +237,45 @@ final class ThrottleMiddlewareTest extends TestCase
         // request with REMOTE_ADDR only → different key → still passes
         $plain = $this->makeRequest(server: ['REMOTE_ADDR' => '10.0.0.1']);
         $this->assertSame(200, $middleware->handle($plain, $next)->status());
+    }
+
+    /**
+     * Regression: a random X-Forwarded-For per request used to yield a fresh
+     * bucket every time, bypassing the limit entirely.
+     *
+     * @return void
+     */
+    public function test_spoofed_x_forwarded_for_from_untrusted_peer_cannot_bypass_the_limit(): void
+    {
+        $middleware = new ThrottleMiddleware($this->limiter, 2, 60);
+        $next = fn (Request $r): Response => new Response('OK', 200);
+
+        $statuses = [];
+
+        foreach (['1.1.1.1', '2.2.2.2', '3.3.3.3'] as $forged) {
+            $request = $this->makeRequest(headers: ['x-forwarded-for' => $forged], server: ['REMOTE_ADDR' => '8.8.8.8']);
+            $statuses[] = $middleware->handle($request, $next)->status();
+        }
+
+        $this->assertSame([200, 200, 429], $statuses);
+    }
+
+    /**
+     * Regression: forging a victim's IP used to exhaust the victim's bucket.
+     *
+     * @return void
+     */
+    public function test_forged_victim_ip_does_not_consume_the_victims_bucket(): void
+    {
+        $middleware = new ThrottleMiddleware($this->limiter, 1, 60);
+        $next = fn (Request $r): Response => new Response('OK', 200);
+
+        $attacker = $this->makeRequest(headers: ['x-forwarded-for' => '4.4.4.4'], server: ['REMOTE_ADDR' => '8.8.8.8']);
+        $middleware->handle($attacker, $next);
+        $middleware->handle($attacker, $next);
+
+        $victim = $this->makeRequest(server: ['REMOTE_ADDR' => '4.4.4.4']);
+        $this->assertSame(200, $middleware->handle($victim, $next)->status());
     }
 
     // ── custom key resolver ──────────────────────────────────────────────────

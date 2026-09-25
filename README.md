@@ -138,13 +138,18 @@ Plug into the framework middleware pipeline for per-IP global or per-route throt
 // Global — in AppServiceProvider::boot()
 $app->middleware(new ThrottleMiddleware($limiter, maxAttempts: 60, decaySeconds: 60));
 
+// Behind a reverse proxy / load balancer: list its address(es)
+$app->middleware(new ThrottleMiddleware($limiter, trustedProxies: ['10.0.0.1']));
+
 // Per-route
 $router->get('/login', [LoginController::class, 'store'])
     ->middleware(new ThrottleMiddleware($limiter, maxAttempts: 5, decaySeconds: 60));
 ```
 
 The middleware:
-- Resolves the client IP from `X-Forwarded-For` (first value) or falls back to `REMOTE_ADDR`.
+- Keys the limit on the client IP: `REMOTE_ADDR`, or — only when `REMOTE_ADDR` is one of the
+  `trustedProxies` you pass — the first untrusted `X-Forwarded-For` hop (walking from the right).
+  Without trusted proxies the header is ignored, so clients cannot dodge the limit with a forged header.
 - Returns **HTTP 429** with body `Too Many Requests` when the limit is exceeded.
 - Adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers on every passing response.
 

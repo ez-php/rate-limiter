@@ -9,6 +9,7 @@ use EzPhp\RateLimiter\ArrayDriver;
 use EzPhp\RateLimiter\RateLimiter;
 use EzPhp\RateLimiter\RateLimiterInterface;
 use EzPhp\RateLimiter\RateLimiterServiceProvider;
+use EzPhp\Testing\ApplicationTestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 
@@ -21,7 +22,7 @@ use PHPUnit\Framework\Attributes\UsesClass;
 #[CoversClass(RateLimiterServiceProvider::class)]
 #[UsesClass(RateLimiter::class)]
 #[UsesClass(ArrayDriver::class)]
-final class RateLimiterServiceProviderTest extends TestCase
+final class RateLimiterServiceProviderTest extends ApplicationTestCase
 {
     /**
      * @param Application $app
