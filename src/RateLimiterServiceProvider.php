@@ -37,8 +37,7 @@ final class RateLimiterServiceProvider extends ServiceProvider
         $this->app->bind(RateLimiterInterface::class, function (): RateLimiterInterface {
             $config = $this->app->make(ConfigInterface::class);
 
-            /** @var string $driver */
-            $driver = $config->get('rate_limiter.driver', 'array');
+            $driver = self::configString($config, 'rate_limiter.driver', 'array');
 
             return match ($driver) {
                 'file' => $this->makeFileDriver($config),
@@ -56,8 +55,7 @@ final class RateLimiterServiceProvider extends ServiceProvider
      */
     private function makeFileDriver(ConfigInterface $config): FileDriver
     {
-        /** @var string $path */
-        $path = $config->get('rate_limiter.file.path', sys_get_temp_dir() . '/ez-php-rate-limiter');
+        $path = self::configString($config, 'rate_limiter.file.path', sys_get_temp_dir() . '/ez-php-rate-limiter');
 
         return new FileDriver($path);
     }
@@ -69,12 +67,9 @@ final class RateLimiterServiceProvider extends ServiceProvider
      */
     private function makeRedisDriver(ConfigInterface $config): RedisDriver
     {
-        /** @var string $host */
-        $host = $config->get('rate_limiter.redis.host', '127.0.0.1');
-        /** @var int $port */
-        $port = $config->get('rate_limiter.redis.port', 6379);
-        /** @var int $database */
-        $database = $config->get('rate_limiter.redis.database', 0);
+        $host = self::configString($config, 'rate_limiter.redis.host', '127.0.0.1');
+        $port = self::configInt($config, 'rate_limiter.redis.port', 6379);
+        $database = self::configInt($config, 'rate_limiter.redis.database', 0);
 
         $redis = new Redis();
         $redis->connect($host, $port);
@@ -95,5 +90,38 @@ final class RateLimiterServiceProvider extends ServiceProvider
         $cache = $this->app->make(CacheInterface::class);
 
         return new CacheDriver($cache);
+    }
+
+    /**
+     * Read a string config value, falling back to $default when it is missing or not a string.
+     *
+     * @param ConfigInterface $config
+     * @param string          $key
+     * @param string          $default
+     *
+     * @return string
+     */
+    private static function configString(ConfigInterface $config, string $key, string $default): string
+    {
+        $value = $config->get($key, $default);
+
+        return is_string($value) ? $value : $default;
+    }
+
+    /**
+     * Read an int config value (int or numeric string, e.g. an uncast getenv() result),
+     * falling back to $default otherwise.
+     *
+     * @param ConfigInterface $config
+     * @param string          $key
+     * @param int             $default
+     *
+     * @return int
+     */
+    private static function configInt(ConfigInterface $config, string $key, int $default): int
+    {
+        $value = $config->get($key, $default);
+
+        return is_int($value) || (is_string($value) && is_numeric($value)) ? (int) $value : $default;
     }
 }

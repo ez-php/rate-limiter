@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace EzPhp\RateLimiter\Middleware;
 
-use EzPhp\Contracts\MiddlewareInterface;
+use EzPhp\Contracts\ParameterizedMiddlewareInterface;
 use EzPhp\Http\RequestInterface;
 use EzPhp\Http\Response;
 use EzPhp\Http\ResponseInterface;
 use EzPhp\RateLimiter\RateLimiterInterface;
+use LogicException;
 
 /**
  * Class ThrottleMiddleware
@@ -25,9 +26,15 @@ use EzPhp\RateLimiter\RateLimiterInterface;
  * On throttle: returns HTTP 429 with a plain-text body.
  * On pass:     adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers.
  *
+ * Per-route limits come from registration parameters —
+ * `'throttle:maxAttempts,decaySeconds[,bucket]'` with an alias, or
+ * `ThrottleMiddleware::class . ':5,60'` — so one container-built instance
+ * serves every route. Each parameter set gets its own counter unless routes
+ * name the same `bucket`.
+ *
  * @package EzPhp\RateLimiter\Middleware
  */
-final readonly class ThrottleMiddleware implements MiddlewareInterface
+final readonly class ThrottleMiddleware implements ParameterizedMiddlewareInterface
 {
     /**
      * ThrottleMiddleware Constructor
@@ -57,20 +64,26 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
     /**
      * @param RequestInterface $request
      * @param callable         $next
+     * @param string           ...$parameters `maxAttempts`, `decaySeconds` and optional `bucket` from a
+     *                                        `'throttle:5,60[,bucket]'` registration; none = constructor values.
      *
      * @return ResponseInterface
      *
+     * @throws LogicException When the parameters are malformed.
+     *
      * @phpstan-impure
      */
-    public function handle(RequestInterface $request, callable $next): ResponseInterface
+    public function handle(RequestInterface $request, callable $next, string ...$parameters): ResponseInterface
     {
+        [$maxAttempts, $decaySeconds, $keyPrefix] = $this->limits(array_values($parameters));
+
         $keySuffix = $this->keyResolver !== null
             ? ($this->keyResolver)($request)
             : $this->resolveIp($request);
 
-        $key = $this->keyPrefix . ':' . $keySuffix;
+        $key = $keyPrefix . ':' . $keySuffix;
 
-        if (!$this->limiter->attempt($key, $this->maxAttempts, $this->decaySeconds)) {
+        if (!$this->limiter->attempt($key, $maxAttempts, $decaySeconds)) {
             return (new Response('Too Many Requests', 429))
                 ->withHeader('Retry-After', (string) $this->limiter->availableIn($key));
         }
@@ -79,8 +92,56 @@ final readonly class ThrottleMiddleware implements MiddlewareInterface
         $response = $next($request);
 
         return $response
-            ->withHeader('X-RateLimit-Limit', (string) $this->maxAttempts)
-            ->withHeader('X-RateLimit-Remaining', (string) $this->limiter->remainingAttempts($key, $this->maxAttempts));
+            ->withHeader('X-RateLimit-Limit', (string) $maxAttempts)
+            ->withHeader('X-RateLimit-Remaining', (string) $this->limiter->remainingAttempts($key, $maxAttempts));
+    }
+
+    /**
+     * Resolve the limit, window and key prefix for this call.
+     *
+     * Without parameters the constructor values apply. With parameters, the key
+     * prefix defaults to `<keyPrefix>:<max>,<decay>` so each distinct limit gets its
+     * own counter (and never shares one with the global, unparameterized limit);
+     * a third parameter names a bucket that several routes can share.
+     *
+     * @param list<string> $parameters
+     *
+     * @return array{0: int, 1: int, 2: string}
+     *
+     * @throws LogicException When the parameters are malformed.
+     */
+    private function limits(array $parameters): array
+    {
+        if ($parameters === []) {
+            return [$this->maxAttempts, $this->decaySeconds, $this->keyPrefix];
+        }
+
+        if (count($parameters) < 2 || count($parameters) > 3) {
+            throw new LogicException("ThrottleMiddleware expects 'throttle:maxAttempts,decaySeconds[,bucket]'.");
+        }
+
+        $maxAttempts = self::positiveInt($parameters[0], 'maxAttempts');
+        $decaySeconds = self::positiveInt($parameters[1], 'decaySeconds');
+        $bucket = $parameters[2] ?? ($maxAttempts . ',' . $decaySeconds);
+
+        return [$maxAttempts, $decaySeconds, $this->keyPrefix . ':' . $bucket];
+    }
+
+    /**
+     * @param string $value
+     * @param string $name
+     *
+     * @return int
+     *
+     * @throws LogicException When $value is not a positive integer.
+     */
+    private static function positiveInt(string $value, string $name): int
+    {
+        if (preg_match('/^[1-9][0-9]*$/', $value) !== 1) {
+            throw new LogicException("ThrottleMiddleware parameter '{$name}' must be a positive integer, '{$value}' given.");
+        }
+
+        return (int) $value;
     }
 
     /**

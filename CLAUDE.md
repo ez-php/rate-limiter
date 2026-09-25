@@ -241,7 +241,7 @@ Only set a port for services the module actually uses. Modules without external 
 
 > The `MEILISEARCH_PORT` column is the **host** port. Inside a Compose network the service is always reachable at `http://meilisearch:7700` regardless of the host mapping — only publish-side ports need to be unique.
 
-> The "Redis host port" column is likewise the **host**-published port. `ez-php/cache`, `ez-php/queue`, and `ez-php/rate-limiter` map it through a separate `REDIS_HOST_PORT` env var in `docker-compose.yml`, keeping `REDIS_PORT` fixed at `6379` for in-container connections (the app container always reaches Redis at `redis:6379` over the Compose network, regardless of the host mapping) — the root project and the `ez-php/` application template are the two exceptions, since both have no host/container split and use `REDIS_PORT` for both (the template's other in-container Redis settings — `CACHE_REDIS_PORT`, `QUEUE_REDIS_PORT`, `RATE_LIMITER_REDIS_PORT` — stay fixed at `6379` regardless, same as every other module).
+> The "Redis host port" column is likewise the **host**-published port. `ez-php/cache`, `ez-php/queue`, and `ez-php/rate-limiter` map it through a separate `REDIS_HOST_PORT` env var in `docker-compose.yml`, keeping `REDIS_PORT` fixed at `6379` for in-container connections (the app container always reaches Redis at `redis:6379` over the Compose network, regardless of the host mapping) — the root project and the `ez-php/` application template are the two exceptions, since both have no host/container split and use `REDIS_PORT` for both (the template's other in-container Redis settings — `CACHE_REDIS_PORT`, `QUEUE_REDIS_PORT`, `RATE_LIMITER_REDIS_PORT`, `HEALTH_REDIS_PORT` — stay fixed at `6379` regardless, same as every other module).
 
 > This table tracks only MySQL, Redis, and Meilisearch ports — the three services shared across multiple modules where a collision is otherwise easy to introduce. Mailpit is the one other service with published host ports: SMTP `1025` and web UI `8025`. `ez-php/mail` maps them through `MAILPIT_SMTP_HOST_PORT`/`MAILPIT_API_HOST_PORT` in `modules/mail/docker-compose.yml` (mirroring the `*_HOST_PORT` pattern above, documented in `modules/mail/.env.example`); the root project and the `ez-php/` template each run their own Mailpit on the same defaults (`MAIL_PORT`/`MAIL_WEB_PORT`), so **these three stacks cannot run at the same time** without overriding those variables. It isn't a table column because no module beyond those three runs Mailpit — but a new module adding its own single-use service's ports should likewise parameterize them and document the defaults in its own `.env.example` rather than adding a column here.
 
@@ -272,7 +272,7 @@ src/
 ├── RateLimiter.php                    — Static facade backed by a managed singleton; falls back to ArrayDriver
 ├── RateLimiterServiceProvider.php     — Binds RateLimiterInterface per config; sets RateLimiter singleton in boot()
 └── Middleware/
-    └── ThrottleMiddleware.php         — MiddlewareInterface; per-IP throttle; 429 on exceed; rate-limit headers
+    └── ThrottleMiddleware.php         — ParameterizedMiddlewareInterface ('throttle:max,decay[,bucket]'); per-IP throttle; 429 on exceed; rate-limit headers
 
 tests/
 ├── TestCase.php                       — Base PHPUnit test case
@@ -283,7 +283,7 @@ tests/
 ├── RateLimiterFileDriverTest.php      — Full contract tests; temp directory; name-prefixed to avoid a class clash
 ├── RateLimiterTest.php                — Covers facade: instance management, all four static methods
 └── Middleware/
-    └── ThrottleMiddlewareTest.php     — Pass-through, 429, headers, IP resolution via ArrayDriver
+    └── ThrottleMiddlewareTest.php     — Pass-through, 429, headers, IP resolution, registration parameters via ArrayDriver
 ```
 
 ---
@@ -350,7 +350,7 @@ Delegates to any `CacheInterface` (Array, File, Redis). Each entry is stored as 
 
 ### ThrottleMiddleware (`src/Middleware/ThrottleMiddleware.php`)
 
-Implements `MiddlewareInterface`. Resolves the client IP, calls `attempt()`, and either:
+Implements `ParameterizedMiddlewareInterface` (`ez-php/contracts`). Resolves the client IP, calls `attempt()`, and either:
 - Returns **HTTP 429** (`Too Many Requests`) immediately — `$next` is not called.
 - Calls `$next($request)`, then adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers to the response.
 
@@ -359,7 +359,9 @@ Implements `MiddlewareInterface`. Resolves the client IP, calls `attempt()`, and
 2. behind a trusted proxy: the first untrusted `X-Forwarded-For` hop, walking from the right
 3. Fallback: `'unknown'` when the server bag has no `REMOTE_ADDR`
 
-The throttle key is `'throttle:' . $ip`.
+The throttle key is `'<keyPrefix>:' . $ip` (`keyPrefix` defaults to `throttle`).
+
+**Registration parameters** — `'throttle:maxAttempts,decaySeconds[,bucket]'` (with a `throttle` alias) overrides the constructor limits per route, so one container-built instance serves every route. The key prefix then becomes `<keyPrefix>:<max>,<decay>` — each distinct limit gets its own counter, never shared with the unparameterized global limit — or `<keyPrefix>:<bucket>` when a third parameter names a bucket several routes share. Malformed parameters (non-numeric, zero, not 2–3 values) throw `LogicException`: a configuration error, not a 429.
 
 ---
 

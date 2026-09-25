@@ -134,17 +134,37 @@ singleton between test cases.
 
 Plug into the framework middleware pipeline for per-IP global or per-route throttling:
 
+Middleware is registered by class name and resolved from the container. For one global
+limit, bind the configured `ThrottleMiddleware` in a provider's `register()` and add the class:
+
 ```php
-// Global — in AppServiceProvider::boot()
-$app->middleware(new ThrottleMiddleware($limiter, maxAttempts: 60, decaySeconds: 60));
+// AppServiceProvider::register()
+$this->app->bind(ThrottleMiddleware::class, fn (): ThrottleMiddleware => new ThrottleMiddleware(
+    $this->app->make(RateLimiterInterface::class),
+    maxAttempts: 60,
+    decaySeconds: 60,
+    trustedProxies: ['10.0.0.1'], // behind a reverse proxy / load balancer: list its address(es)
+));
 
-// Behind a reverse proxy / load balancer: list its address(es)
-$app->middleware(new ThrottleMiddleware($limiter, trustedProxies: ['10.0.0.1']));
-
-// Per-route
-$router->get('/login', [LoginController::class, 'store'])
-    ->middleware(new ThrottleMiddleware($limiter, maxAttempts: 5, decaySeconds: 60));
+// Global — before bootstrap (e.g. public/index.php)
+$app->middleware(ThrottleMiddleware::class);
 ```
+
+For per-route limits, pass them as middleware parameters — `maxAttempts,decaySeconds[,bucket]`
+(`ThrottleMiddleware` implements `ParameterizedMiddlewareInterface`). The same container-built
+instance serves every route; only the parameters differ:
+
+```php
+$app->middlewareAlias('throttle', ThrottleMiddleware::class); // before bootstrap
+
+$router->post('/login', [LoginController::class, 'store'])->middleware('throttle:5,60');
+$router->post('/register', [RegisterController::class, 'store'])->middleware('throttle:3,60');
+$router->post('/password/reset', [ResetController::class, 'store'])->middleware('throttle:3,60,password-reset');
+```
+
+Each distinct `max,decay` pair gets its own counter, separate from the global limit's; routes that
+should share one counter name the same third parameter (`bucket`). Malformed parameters (non-numeric,
+zero, or more than three) throw `LogicException` — a configuration error, not a 429.
 
 The middleware:
 - Keys the limit on the client IP: `REMOTE_ADDR`, or — only when `REMOTE_ADDR` is one of the

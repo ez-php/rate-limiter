@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Middleware;
 
+use EzPhp\Contracts\ParameterizedMiddlewareInterface;
 use EzPhp\Http\Request;
 use EzPhp\Http\RequestInterface;
 use EzPhp\Http\Response;
 use EzPhp\RateLimiter\ArrayDriver;
 use EzPhp\RateLimiter\Middleware\ThrottleMiddleware;
+use LogicException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\TestCase;
@@ -302,6 +304,62 @@ final class ThrottleMiddlewareTest extends TestCase
         // same user id, different IPs → same bucket, second request throttled
         $this->assertSame(200, $middleware->handle($requestA, $next)->status());
         $this->assertSame(429, $middleware->handle($requestB, $next)->status());
+    }
+
+    // ── registration parameters ('throttle:max,decay[,prefix]') ─────────────
+
+    public function test_is_a_parameterized_middleware(): void
+    {
+        $this->assertInstanceOf(ParameterizedMiddlewareInterface::class, new ThrottleMiddleware($this->limiter));
+    }
+
+    public function test_parameters_override_the_constructor_limits(): void
+    {
+        $middleware = new ThrottleMiddleware($this->limiter, 60, 60);
+        $next = fn (Request $r): Response => new Response('OK', 200);
+
+        $first = $middleware->handle($this->makeRequest(), $next, '2', '60');
+        $this->assertSame('2', $first->headers()['X-RateLimit-Limit'] ?? null);
+        $this->assertSame(200, $middleware->handle($this->makeRequest(), $next, '2', '60')->status());
+        $this->assertSame(429, $middleware->handle($this->makeRequest(), $next, '2', '60')->status());
+    }
+
+    public function test_different_parameter_sets_use_separate_counters(): void
+    {
+        $middleware = new ThrottleMiddleware($this->limiter);
+        $next = fn (Request $r): Response => new Response('OK', 200);
+
+        $this->assertSame(200, $middleware->handle($this->makeRequest(), $next, '1', '60')->status());
+        $this->assertSame(429, $middleware->handle($this->makeRequest(), $next, '1', '60')->status());
+        // a route registered as 'throttle:5,60' has its own bucket
+        $this->assertSame(200, $middleware->handle($this->makeRequest(), $next, '5', '60')->status());
+        // the global (unparameterized) limit is untouched as well
+        $this->assertSame(200, $middleware->handle($this->makeRequest(), $next)->status());
+    }
+
+    public function test_third_parameter_names_a_shared_bucket(): void
+    {
+        $middleware = new ThrottleMiddleware($this->limiter);
+        $next = fn (Request $r): Response => new Response('OK', 200);
+
+        // 'throttle:1,60,auth' on two routes: one shared counter
+        $this->assertSame(200, $middleware->handle($this->makeRequest(), $next, '1', '60', 'auth')->status());
+        $this->assertSame(429, $middleware->handle($this->makeRequest(), $next, '1', '60', 'auth')->status());
+    }
+
+    public function test_non_numeric_or_non_positive_parameters_are_a_configuration_error(): void
+    {
+        $middleware = new ThrottleMiddleware($this->limiter);
+        $next = fn (Request $r): Response => new Response('OK', 200);
+
+        foreach ([['five', '60'], ['5', '0'], ['5', '60', 'bucket', 'extra']] as $parameters) {
+            try {
+                $middleware->handle($this->makeRequest(), $next, ...$parameters);
+                $this->fail('Expected LogicException for ' . implode(',', $parameters));
+            } catch (LogicException) {
+                $this->addToAssertionCount(1);
+            }
+        }
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
