@@ -8,6 +8,7 @@ use EzPhp\RateLimiter\ArrayDriver;
 use EzPhp\RateLimiter\RateLimiter;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -25,7 +26,7 @@ final class RateLimiterTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        RateLimiter::resetInstance();
+        RateLimiter::setInstance(new RateLimiter(new ArrayDriver()));
     }
 
     /**
@@ -68,21 +69,33 @@ final class RateLimiterTest extends TestCase
      */
     public function test_resetInstance_clears_singleton(): void
     {
-        $first = RateLimiter::getInstance();
         RateLimiter::resetInstance();
-        $second = RateLimiter::getInstance();
 
-        $this->assertNotSame($first, $second);
+        $this->expectException(RuntimeException::class);
+        RateLimiter::getInstance();
     }
 
     /**
      * @return void
      */
-    public function test_getInstance_creates_array_driver_lazily(): void
+    public function test_getInstance_throws_when_no_instance_is_set(): void
     {
-        $instance = RateLimiter::getInstance();
+        RateLimiter::resetInstance();
 
-        $this->assertInstanceOf(RateLimiter::class, $instance);
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('RateLimiterServiceProvider');
+        RateLimiter::getInstance();
+    }
+
+    /**
+     * @return void
+     */
+    public function test_static_calls_throw_instead_of_silently_using_an_in_memory_driver(): void
+    {
+        RateLimiter::resetInstance();
+
+        $this->expectException(RuntimeException::class);
+        RateLimiter::attempt('login:203.0.113.9', 5, 60);
     }
 
     // ─── Static facade ───────────────────────────────────────────────────────

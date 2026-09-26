@@ -16,8 +16,10 @@ namespace EzPhp\RateLimiter;
  *   RateLimiter::resetAttempts('login:'.$ip)        // void
  *
  * The facade is backed by a managed singleton. RateLimiterServiceProvider sets
- * the instance during boot(). Without a service provider the facade falls back
- * to an in-memory ArrayDriver.
+ * the instance during boot(); calling the facade before that throws. There is
+ * deliberately no in-memory fallback: an ArrayDriver lives per PHP process, so
+ * under PHP-FPM every worker (and every request) would count from zero and the
+ * limit would silently never trigger.
  *
  * @package EzPhp\RateLimiter
  */
@@ -47,12 +49,16 @@ final class RateLimiter
     }
 
     /**
+     * @throws \RuntimeException When no instance has been set (RateLimiterServiceProvider not registered).
+     *
      * @return self
      */
     public static function getInstance(): self
     {
         if (self::$instance === null) {
-            self::$instance = new self(new ArrayDriver());
+            throw new \RuntimeException(
+                'RateLimiter instance not set. Did you register RateLimiterServiceProvider?'
+            );
         }
 
         return self::$instance;

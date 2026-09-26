@@ -108,9 +108,11 @@ $limiter->resetAttempts('login:' . $ip);        // clear the counter (e.g. on su
 ## Using the facade
 
 `RateLimiter` mirrors `RateLimiterInterface` as static methods, backed by a managed
-singleton set during `RateLimiterServiceProvider::boot()`. Without a service provider
-it falls back to an in-memory `ArrayDriver`, so it's safe to call in code paths that
-run before the provider boots (e.g. early tests).
+singleton set during `RateLimiterServiceProvider::boot()`. Calling it before the
+provider boots throws a `RuntimeException` — there is intentionally no in-memory
+fallback, because a per-process `ArrayDriver` would silently let every PHP-FPM worker
+count from zero. In tests, set one explicitly:
+`RateLimiter::setInstance(new RateLimiter(new ArrayDriver()))`.
 
 ```php
 use EzPhp\RateLimiter\RateLimiter;
