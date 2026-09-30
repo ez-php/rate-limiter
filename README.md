@@ -18,9 +18,9 @@ composer require ez-php/rate-limiter
 |---|---|---|---|
 | `ArrayDriver` | In-process (lost on restart) | None | **No** — single-process/test use only |
 | `FileDriver` | Files on disk | None | Yes — `flock(LOCK_EX)`, single host |
-| `RedisDriver` | Redis | `ext-redis` | Yes — atomic `INCR`, fixed window |
-| `SlidingWindowRedisDriver` | Redis | `ext-redis` | Yes — sorted set, true sliding window |
-| `CacheDriver` | Delegates to `ez-php/cache` | Any configured cache driver | Driver-dependent |
+| `RedisDriver` | Redis | `ext-redis` | Yes — one Lua script (check + `INCR` + `EXPIRE`), fixed window |
+| `SlidingWindowRedisDriver` | Redis | `ext-redis` | Yes — one Lua script over a sorted set, true sliding window |
+| `CacheDriver` | Delegates to `ez-php/cache` | Any configured cache driver | Yes — per-key cache `lock()`; cross-process with the File/Redis/Memcached cache drivers, in-process only with the Array cache driver |
 
 > **Warning:** `ArrayDriver` uses a plain PHP array without atomic operations. Concurrent requests (e.g. PHP-FPM workers) can race and both be allowed through simultaneously. Use `FileDriver`, `RedisDriver` or `CacheDriver` in production.
 
@@ -136,8 +136,11 @@ singleton between test cases.
 
 Plug into the framework middleware pipeline for per-IP global or per-route throttling:
 
-Middleware is registered by class name and resolved from the container. For one global
-limit, bind the configured `ThrottleMiddleware` in a provider's `register()` and add the class:
+Middleware is registered by class name and resolved from the container. `RateLimiterServiceProvider`
+binds `ThrottleMiddleware` with the default limits (60 per 60 s) and the proxies from
+`rate_limiter.trusted_proxies` (a list, or a comma-separated string such as
+`RATE_LIMITER_TRUSTED_PROXIES`) — enough for per-route parameters below. For a different global
+limit, bind your own configured instance in a provider's `register()` that runs after it:
 
 ```php
 // AppServiceProvider::register()
@@ -172,7 +175,9 @@ The middleware:
 - Keys the limit on the client IP: `REMOTE_ADDR`, or — only when `REMOTE_ADDR` is one of the
   `trustedProxies` you pass — the first untrusted `X-Forwarded-For` hop (walking from the right).
   Without trusted proxies the header is ignored, so clients cannot dodge the limit with a forged header.
-- Returns **HTTP 429** with body `Too Many Requests` when the limit is exceeded.
+- Returns **HTTP 429** with body `Too Many Requests` when the limit is exceeded — or, when the request
+  `wantsJson()`, `{"error":{"code":429,"message":"Too Many Requests"}}` (`Content-Type: application/json`,
+  the framework's error envelope). Both carry `Retry-After`.
 - Adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers on every passing response.
 
 ---
@@ -197,6 +202,9 @@ return [
         'port'     => (int) (getenv('REDIS_PORT') ?: 6379),
         'database' => (int) (getenv('REDIS_RATE_LIMITER_DB') ?: 0),
     ],
+
+    // Reverse proxies whose X-Forwarded-For ThrottleMiddleware honours.
+    'trusted_proxies' => getenv('RATE_LIMITER_TRUSTED_PROXIES') ?: '',
 ];
 ```
 

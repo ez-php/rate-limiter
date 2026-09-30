@@ -172,4 +172,38 @@ final class CacheDriverTest extends TestCase
         $this->assertFalse($this->driver->attempt('a', 2, 60));
         $this->assertTrue($this->driver->attempt('b', 2, 60));
     }
+
+    // ── atomicity ─────────────────────────────────────────────────────────────
+
+    /**
+     * Runs attempt() from several processes over a shared ez-php/cache
+     * FileDriver: the per-key lock must keep the total at maxAttempts.
+     *
+     * @return void
+     */
+    public function test_concurrent_attempts_never_exceed_max(): void
+    {
+        $dir = sys_get_temp_dir() . '/ez-php-rl-cache-' . bin2hex(random_bytes(6));
+        // Created up front so the children don't race on mkdir() in the cache FileDriver.
+        mkdir($dir, 0o700);
+
+        try {
+            $allowed = RateLimiterConcurrency::allowedAttempts(
+                sprintf('new \EzPhp\RateLimiter\CacheDriver(new \EzPhp\Cache\FileDriver(%s))', var_export($dir, true)),
+                'concurrent',
+                10,
+                12,
+                5,
+            );
+        } finally {
+            foreach (glob($dir . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            if (is_dir($dir)) {
+                rmdir($dir);
+            }
+        }
+
+        $this->assertSame(10, $allowed);
+    }
 }

@@ -7,6 +7,7 @@ namespace EzPhp\RateLimiter;
 use EzPhp\Cache\CacheInterface;
 use EzPhp\Contracts\ConfigInterface;
 use EzPhp\Contracts\ServiceProvider;
+use EzPhp\RateLimiter\Middleware\ThrottleMiddleware;
 use Redis;
 
 /**
@@ -16,6 +17,10 @@ use Redis;
  * driver selected by the `rate_limiter.driver` config key.
  *
  * Supported drivers: `array` (default), `file`, `redis`, `cache`.
+ *
+ * Also binds `ThrottleMiddleware` with the default limits and the proxies from
+ * `rate_limiter.trusted_proxies` (a list, or a comma-separated string such as a
+ * `TRUSTED_PROXIES` env var). An application binding registered later replaces it.
  *
  * @package EzPhp\RateLimiter
  */
@@ -45,6 +50,13 @@ final class RateLimiterServiceProvider extends ServiceProvider
                 'cache' => $this->makeCacheDriver(),
                 default => new ArrayDriver(),
             };
+        });
+
+        $this->app->bind(ThrottleMiddleware::class, function (): ThrottleMiddleware {
+            return new ThrottleMiddleware(
+                $this->app->make(RateLimiterInterface::class),
+                trustedProxies: self::configList($this->app->make(ConfigInterface::class), 'rate_limiter.trusted_proxies'),
+            );
         });
     }
 
@@ -106,6 +118,30 @@ final class RateLimiterServiceProvider extends ServiceProvider
         $value = $config->get($key, $default);
 
         return is_string($value) ? $value : $default;
+    }
+
+    /**
+     * Read a list of strings from a list config value or a comma-separated string.
+     * Blank entries and non-string list items are dropped.
+     *
+     * @param ConfigInterface $config
+     * @param string          $key
+     *
+     * @return list<string>
+     */
+    private static function configList(ConfigInterface $config, string $key): array
+    {
+        $value = $config->get($key, []);
+        $items = is_string($value) ? explode(',', $value) : (is_array($value) ? $value : []);
+        $list = [];
+
+        foreach ($items as $item) {
+            if (is_string($item) && trim($item) !== '') {
+                $list[] = trim($item);
+            }
+        }
+
+        return $list;
     }
 
     /**

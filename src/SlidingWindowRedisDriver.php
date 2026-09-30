@@ -11,10 +11,11 @@ use RuntimeException;
  * Class SlidingWindowRedisDriver
  *
  * Rate limiter backed by a Redis sorted set, one member per hit (score = hit
- * timestamp). `attempt()` first removes members older than the current
- * window (`ZREMRANGEBYSCORE ... -inf (now - decaySeconds)`), then checks
- * `ZCARD` against the limit before adding a new member — a true sliding
- * window, unlike `RedisDriver`'s fixed window that resets in one block.
+ * timestamp). `attempt()` runs one Lua script that removes members older
+ * than the current window (`ZREMRANGEBYSCORE ... -inf (now - decaySeconds)`),
+ * checks `ZCARD` against the limit, adds the new member and refreshes the
+ * TTL — atomically, so concurrent requests can never exceed the limit. A true
+ * sliding window, unlike `RedisDriver`'s fixed window that resets in one block.
  *
  * `tooManyAttempts()`/`remainingAttempts()`/`availableIn()` do not receive
  * `$decaySeconds` (per RateLimiterInterface) and therefore do not re-prune;
@@ -28,6 +29,21 @@ use RuntimeException;
  */
 final readonly class SlidingWindowRedisDriver implements RateLimiterInterface
 {
+    /**
+     * KEYS[1] = sorted-set key; ARGV[1] = window start, ARGV[2] = now (score),
+     * ARGV[3] = member, ARGV[4] = max attempts, ARGV[5] = decay seconds.
+     * Returns 1 when the hit was recorded, 0 when the limit is already reached.
+     */
+    private const string ATTEMPT_SCRIPT = <<<'LUA'
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+        if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[4]) then
+            return 0
+        end
+        redis.call('ZADD', KEYS[1], ARGV[2], ARGV[3])
+        redis.call('EXPIRE', KEYS[1], ARGV[5])
+        return 1
+        LUA;
+
     /**
      * SlidingWindowRedisDriver Constructor
      *
@@ -51,24 +67,25 @@ final readonly class SlidingWindowRedisDriver implements RateLimiterInterface
      */
     public function attempt(string $key, int $maxAttempts, int $decaySeconds): bool
     {
+        $now = microtime(true);
+        $member = sprintf('%.6F', $now) . ':' . bin2hex(random_bytes(4));
+
         try {
-            $this->pruneExpired($key, $decaySeconds);
-
-            if ($this->currentHits($key) >= $maxAttempts) {
-                return false;
-            }
-
-            $now = microtime(true);
-            $member = $now . ':' . bin2hex(random_bytes(4));
-
-            $this->redis->zAdd($key, $now, $member);
-            $this->redis->expire($key, $decaySeconds);
+            $allowed = $this->redis->eval(self::ATTEMPT_SCRIPT, [
+                $key,
+                sprintf('%.6F', $now - $decaySeconds),
+                sprintf('%.6F', $now),
+                $member,
+                $maxAttempts,
+                $decaySeconds,
+            ], 1);
         } catch (\RedisException) {
             // Fail open — see RedisDriver::attempt() for the same reasoning.
             return true;
         }
 
-        return true;
+        // eval() returns false when the script itself fails; fail open as above.
+        return $allowed !== 0;
     }
 
     /**
@@ -113,21 +130,6 @@ final readonly class SlidingWindowRedisDriver implements RateLimiterInterface
         $ttl = $this->redis->ttl($key);
 
         return is_int($ttl) && $ttl > 0 ? $ttl : 0;
-    }
-
-    /**
-     * Remove members whose hit timestamp is older than the current window.
-     *
-     * @param string $key
-     * @param int    $decaySeconds
-     *
-     * @return void
-     */
-    private function pruneExpired(string $key, int $decaySeconds): void
-    {
-        $windowStart = microtime(true) - $decaySeconds;
-
-        $this->redis->zRemRangeByScore($key, '-inf', (string) $windowStart);
     }
 
     /**

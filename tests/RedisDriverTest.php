@@ -197,4 +197,53 @@ final class RedisDriverTest extends TestCase
         $this->assertFalse($this->driver->attempt('a', 2, 60));
         $this->assertTrue($this->driver->attempt('b', 2, 60));
     }
+
+    // ── atomicity ─────────────────────────────────────────────────────────────
+
+    /**
+     * @return void
+     */
+    public function test_concurrent_attempts_never_exceed_max(): void
+    {
+        $allowed = RateLimiterConcurrency::allowedAttempts(
+            RateLimiterConcurrency::redisFactory(
+                RedisDriver::class,
+                getenv('REDIS_HOST') ?: '127.0.0.1',
+                (int) (getenv('REDIS_PORT') ?: 6379),
+                2,
+            ),
+            'concurrent',
+            10,
+            12,
+            5,
+        );
+
+        $this->assertSame(10, $allowed);
+    }
+
+    /**
+     * A counter left without a TTL (e.g. a crash between INCR and EXPIRE in an
+     * older version) must not lock the key out forever.
+     *
+     * @return void
+     */
+    public function test_attempt_sets_ttl_on_a_key_without_one(): void
+    {
+        $this->redis->set('stale', '1');
+
+        $this->assertTrue($this->driver->attempt('stale', 5, 60));
+        $this->assertGreaterThan(0, $this->redis->ttl('stale'));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_rejected_attempts_are_not_counted(): void
+    {
+        $this->driver->attempt('key', 2, 60);
+        $this->driver->attempt('key', 2, 60);
+        $this->driver->attempt('key', 2, 60);
+
+        $this->assertSame('2', $this->redis->get('key'));
+    }
 }

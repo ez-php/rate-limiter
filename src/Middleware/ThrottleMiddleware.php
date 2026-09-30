@@ -23,7 +23,8 @@ use LogicException;
  * forging the victim's IP. Pass a `$keyResolver` to throttle by something else
  * (e.g. authenticated user id).
  *
- * On throttle: returns HTTP 429 with a plain-text body.
+ * On throttle: returns HTTP 429 with a plain-text body, or the framework's
+ *              JSON error envelope when the request wantsJson().
  * On pass:     adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers.
  *
  * Per-route limits come from registration parameters —
@@ -84,8 +85,12 @@ final readonly class ThrottleMiddleware implements ParameterizedMiddlewareInterf
         $key = $keyPrefix . ':' . $keySuffix;
 
         if (!$this->limiter->attempt($key, $maxAttempts, $decaySeconds)) {
-            return (new Response('Too Many Requests', 429))
-                ->withHeader('Retry-After', (string) $this->limiter->availableIn($key));
+            $response = $request->wantsJson()
+                ? (new Response('{"error":{"code":429,"message":"Too Many Requests"}}', 429))
+                    ->withHeader('Content-Type', 'application/json')
+                : new Response('Too Many Requests', 429);
+
+            return $response->withHeader('Retry-After', (string) $this->limiter->availableIn($key));
         }
 
         /** @var ResponseInterface $response */

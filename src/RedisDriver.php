@@ -10,9 +10,11 @@ use RuntimeException;
 /**
  * Class RedisDriver
  *
- * Rate limiter backed by Redis. Uses INCR + EXPIRE: the counter key is set on
- * the first hit with an expiry of $decaySeconds. Subsequent hits increment the
- * counter without resetting the window.
+ * Rate limiter backed by Redis, fixed window. attempt() runs one Lua script, so
+ * check, INCR and EXPIRE are atomic: concurrent requests can never push the
+ * counter past $maxAttempts, and the TTL is set in the same step as the first
+ * hit (a key found without a TTL gets one too, so it can't lock out forever).
+ * Rejected attempts are not counted. Later hits do not reset the window.
  *
  * Requires the PHP `ext-redis` extension.
  *
@@ -20,6 +22,22 @@ use RuntimeException;
  */
 final readonly class RedisDriver implements RateLimiterInterface
 {
+    /**
+     * KEYS[1] = counter key, ARGV[1] = max attempts, ARGV[2] = decay seconds.
+     * Returns 1 when the hit was counted, 0 when the limit is already reached.
+     */
+    private const string ATTEMPT_SCRIPT = <<<'LUA'
+        local hits = tonumber(redis.call('GET', KEYS[1]) or '0')
+        if hits >= tonumber(ARGV[1]) then
+            return 0
+        end
+        redis.call('INCR', KEYS[1])
+        if redis.call('TTL', KEYS[1]) < 0 then
+            redis.call('EXPIRE', KEYS[1], ARGV[2])
+        end
+        return 1
+        LUA;
+
     /**
      * RedisDriver Constructor
      *
@@ -43,16 +61,8 @@ final readonly class RedisDriver implements RateLimiterInterface
      */
     public function attempt(string $key, int $maxAttempts, int $decaySeconds): bool
     {
-        if ($this->tooManyAttempts($key, $maxAttempts)) {
-            return false;
-        }
-
         try {
-            $hits = $this->redis->incr($key);
-
-            if ($hits === 1 || $hits === false) {
-                $this->redis->expire($key, $decaySeconds);
-            }
+            $allowed = $this->redis->eval(self::ATTEMPT_SCRIPT, [$key, $maxAttempts, $decaySeconds], 1);
         } catch (\RedisException) {
             // Fail open: a Redis outage should not turn into a site-wide 500
             // via ThrottleMiddleware. Allowing the request through un-throttled
@@ -61,7 +71,8 @@ final readonly class RedisDriver implements RateLimiterInterface
             return true;
         }
 
-        return true;
+        // eval() returns false when the script itself fails; fail open as above.
+        return $allowed !== 0;
     }
 
     /**

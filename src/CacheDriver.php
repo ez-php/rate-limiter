@@ -14,10 +14,29 @@ use EzPhp\Cache\CacheInterface;
  * absolute reset timestamp. The cache TTL is computed as remaining seconds
  * to the reset point so the entry expires together with the window.
  *
+ * attempt() is a read-modify-write over get()/set(), so it runs under the
+ * cache's own per-key lock(): concurrent requests are serialised and can
+ * never push the count past $maxAttempts. The guarantee is as wide as the
+ * cache driver's lock — cross-process for File/Redis/Memcached, in-process
+ * for the Array cache driver. When the lock can't be taken within
+ * LOCK_WAIT_MS the attempt is refused (fail closed): only a burst of
+ * concurrent requests on one key can cause that, which is what a rate
+ * limiter should reject.
+ *
  * @package EzPhp\RateLimiter
  */
 final readonly class CacheDriver implements RateLimiterInterface
 {
+    /**
+     * Lock TTL, so a crashed holder can't block the key for longer.
+     */
+    private const int LOCK_SECONDS = 5;
+
+    /**
+     * How long attempt() retries to take the lock before refusing.
+     */
+    private const int LOCK_WAIT_MS = 1000;
+
     /**
      * CacheDriver Constructor
      *
@@ -36,20 +55,35 @@ final readonly class CacheDriver implements RateLimiterInterface
      */
     public function attempt(string $key, int $maxAttempts, int $decaySeconds): bool
     {
-        if ($this->tooManyAttempts($key, $maxAttempts)) {
-            return false;
+        $lock = $this->cache->lock('rate-limiter-lock:' . $key, self::LOCK_SECONDS);
+        $deadline = hrtime(true) + self::LOCK_WAIT_MS * 1_000_000;
+
+        while (!$lock->acquire()) {
+            if (hrtime(true) >= $deadline) {
+                return false;
+            }
+
+            usleep(random_int(1_000, 5_000));
         }
 
-        $entry = $this->readEntry($key);
+        try {
+            $entry = $this->readEntry($key);
 
-        if ($entry === null) {
-            $entry = ['hits' => 0, 'reset_at' => time() + $decaySeconds];
+            if ($entry !== null && $entry['hits'] >= $maxAttempts) {
+                return false;
+            }
+
+            if ($entry === null) {
+                $entry = ['hits' => 0, 'reset_at' => time() + $decaySeconds];
+            }
+
+            $entry['hits']++;
+            $this->cache->set($key, $entry, max(1, $entry['reset_at'] - time()));
+
+            return true;
+        } finally {
+            $lock->release();
         }
-
-        $entry['hits']++;
-        $this->cache->set($key, $entry, max(1, $entry['reset_at'] - time()));
-
-        return true;
     }
 
     /**

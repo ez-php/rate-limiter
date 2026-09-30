@@ -99,6 +99,25 @@ final class ThrottleMiddlewareTest extends TestCase
     /**
      * @return void
      */
+    public function test_returns_json_429_when_request_wants_json(): void
+    {
+        $middleware = new ThrottleMiddleware($this->limiter, 1, 60);
+        $request = $this->makeRequest(['Accept' => 'application/json']);
+        $next = fn (Request $r): Response => new Response('OK', 200);
+
+        $middleware->handle($request, $next);
+        $response = $middleware->handle($request, $next);
+
+        $this->assertSame(429, $response->status());
+        self::assertInstanceOf(Response::class, $response);
+        $this->assertSame('{"error":{"code":429,"message":"Too Many Requests"}}', $response->body());
+        $this->assertSame('application/json', $response->headers()['Content-Type']);
+        $this->assertArrayHasKey('Retry-After', $response->headers());
+    }
+
+    /**
+     * @return void
+     */
     public function test_retry_after_header_present_on_throttle(): void
     {
         $middleware = new ThrottleMiddleware($this->limiter, 2, 60);

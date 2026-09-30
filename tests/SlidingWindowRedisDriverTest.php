@@ -180,4 +180,27 @@ final class SlidingWindowRedisDriverTest extends TestCase
         $this->assertTrue($this->driver->attempt('b', 1, 60));
         $this->assertFalse($this->driver->attempt('a', 1, 60));
     }
+
+    // ── atomicity ─────────────────────────────────────────────────────────────
+
+    /**
+     * @return void
+     */
+    public function test_concurrent_attempts_never_exceed_max(): void
+    {
+        $allowed = RateLimiterConcurrency::allowedAttempts(
+            RateLimiterConcurrency::redisFactory(
+                SlidingWindowRedisDriver::class,
+                getenv('REDIS_HOST') ?: '127.0.0.1',
+                (int) (getenv('REDIS_PORT') ?: 6379),
+                2,
+            ),
+            'concurrent',
+            10,
+            12,
+            5,
+        );
+
+        $this->assertSame(10, $allowed);
+    }
 }

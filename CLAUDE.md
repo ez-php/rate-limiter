@@ -28,10 +28,11 @@ docker compose exec app composer full
 Executes in order:
 1. `sync_guidelines.php --check` — fails if any `CLAUDE.md` has drifted from this file
 2. `check_test_classes.php` — fails on a duplicate test class name (all packages share the `Tests\` namespace, so a collision is a fatal error in the aggregated run, not a test failure)
-3. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
-4. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+3. `check_module_deps.php` — fails when a package's code imports an ez-php package its `composer.json` does not declare (module `src`: `require`/`suggest`; tests: `require`/`require-dev` and their dependencies), or requires one it never uses
+4. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
+5. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
    *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
-5. `phpunit` — all tests with coverage
+6. `phpunit` — all tests with coverage
 
 Individual commands when needed:
 ```
@@ -40,6 +41,7 @@ composer cs                  # CS Fixer only
 composer test                # PHPUnit only
 composer guidelines:check    # CLAUDE.md drift only
 composer test-classes:check  # duplicate test class names only
+composer module-deps:check   # undeclared / unused ez-php package dependencies only
 ```
 
 **PHPStan:** never suppress with `@phpstan-ignore-line` — always fix the root cause.
@@ -198,20 +200,22 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
-Pass `--services` to merge MySQL/Redis/Meilisearch service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+Pass `--services` to merge MySQL/Redis/Meilisearch/Memcached/Mailpit service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
 ```
 vendor/bin/docker-init --services=mysql
 vendor/bin/docker-init --services=redis
 vendor/bin/docker-init --services=meilisearch
 vendor/bin/docker-init --services=mysql,redis
+vendor/bin/docker-init --services=memcached,mailpit
 ```
 
-Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`:
+Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`, `memcached`, `apcu` (with `apc.enable_cli=1`):
 
 ```
 vendor/bin/docker-init --extensions=gmp,bcmath
 vendor/bin/docker-init --extensions=gd,imagick
+vendor/bin/docker-init --extensions=memcached,apcu
 ```
 
 When run from a module directory inside this monorepo, any requested extension not already present is also merged into the shared root `docker/app/Dockerfile` — the container `composer full` at the root actually runs against, distinct from the module's own standalone image.
@@ -269,21 +273,23 @@ Request throttling for ez-php applications — three backend drivers, a unified 
 src/
 ├── RateLimiterInterface.php           — attempt/tooManyAttempts/remainingAttempts/resetAttempts contract
 ├── ArrayDriver.php                    — In-process PHP array; per-key decay window; no external deps
-├── RedisDriver.php                    — Redis backend via ext-redis; INCR + EXPIRE per decay window (fixed window)
-├── SlidingWindowRedisDriver.php       — Redis sorted-set backend via ext-redis; ZADD + ZREMRANGEBYSCORE (true sliding window)
-├── CacheDriver.php                    — Delegates to ez-php/cache CacheInterface; stores {hits, reset_at} array
+├── RedisDriver.php                    — Redis backend via ext-redis; one Lua script: check + INCR + EXPIRE (fixed window)
+├── SlidingWindowRedisDriver.php       — Redis sorted-set backend via ext-redis; one Lua script: prune + ZCARD + ZADD + EXPIRE (true sliding window)
+├── CacheDriver.php                    — Delegates to ez-php/cache CacheInterface; stores {hits, reset_at} array under a per-key cache lock()
 ├── FileDriver.php                     — File-backed counters; flock(LOCK_EX) read-modify-write; single-host persistence
 ├── RateLimiter.php                    — Static facade backed by a managed singleton; throws until RateLimiterServiceProvider sets it
-├── RateLimiterServiceProvider.php     — Binds RateLimiterInterface per config; sets RateLimiter singleton in boot()
+├── RateLimiterServiceProvider.php     — Binds RateLimiterInterface per config and ThrottleMiddleware with rate_limiter.trusted_proxies; sets RateLimiter singleton in boot()
 └── Middleware/
-    └── ThrottleMiddleware.php         — ParameterizedMiddlewareInterface ('throttle:max,decay[,bucket]'); per-IP throttle; 429 on exceed; rate-limit headers
+    └── ThrottleMiddleware.php         — ParameterizedMiddlewareInterface ('throttle:max,decay[,bucket]'); per-IP throttle; 429 (plain or JSON) on exceed; rate-limit headers
 
 tests/
 ├── TestCase.php                       — Base PHPUnit test case
 ├── ArrayDriverTest.php                — Full contract tests; no external infrastructure
 ├── RedisDriverTest.php                — Full contract tests; requires live Redis; skipped without ext-redis
 ├── SlidingWindowRedisDriverTest.php   — Full contract tests + window-boundary pruning; requires live Redis; skipped without ext-redis; shares database 2 with RedisDriverTest
-├── CacheDriverTest.php                — Full contract tests; uses ez-php/cache ArrayDriver as backing store
+├── CacheDriverTest.php                — Full contract tests; uses ez-php/cache ArrayDriver as backing store; concurrency test over the cache FileDriver
+├── RateLimiterConcurrency.php         — Test helper: runs attempt() from parallel PHP processes and sums the allowed attempts
+├── RateLimiterProviderTrustedProxiesTest.php — rate_limiter.trusted_proxies (comma string) reaches the container-built ThrottleMiddleware
 ├── RateLimiterFileDriverTest.php      — Full contract tests; temp directory; name-prefixed to avoid a class clash
 ├── RateLimiterTest.php                — Covers facade: instance management, fail-fast when unset, all four static methods
 └── Middleware/
@@ -321,10 +327,11 @@ In-process store. Each entry is `['hits' => int, 'reset_at' => int]`. Expiry is 
 
 ### RedisDriver (`src/RedisDriver.php`)
 
-Redis store via `ext-redis`. Uses `INCR` for atomic counter increments and `EXPIRE` to set the window TTL on the first hit. Subsequent hits within the window only increment the counter — `EXPIRE` is not called again, so the window is not extended.
+Redis store via `ext-redis`. `attempt()` is one Lua script (`EVAL`), so the whole decision is atomic:
 
-- First hit: `INCR key` (returns 1) → `EXPIRE key $decaySeconds`
-- Subsequent hits within the window: `INCR key` only
+- `GET key` — if `>= maxAttempts`, return 0 (rejected hits are not counted)
+- otherwise `INCR key`, and `EXPIRE key $decaySeconds` when the key has no TTL yet (first hit — or a counter left without a TTL by an older non-atomic version, which would otherwise lock out forever)
+- Later hits within the window only increment — the window is not extended
 - `resetAttempts()` calls `DEL key`
 - Throws `RuntimeException` at construction if `ext-redis` is not loaded
 
@@ -338,6 +345,8 @@ Redis sorted set via `ext-redis`, one member per hit (score = `microtime(true)` 
 2. `ZCARD key` — if `>= maxAttempts`, returns `false` without recording a hit (same "rejected hits aren't counted" contract as every other driver).
 3. `ZADD key now member` + `EXPIRE key decaySeconds` — records the hit and refreshes the key's own TTL (a safety net so an abandoned key doesn't linger forever; the sliding-window pruning in step 1 is what actually enforces the window).
 
+All three steps run as one Lua script (`EVAL`), so concurrent requests can't all pass step 2 before any of them reaches step 3. `now` is computed in PHP and passed in.
+
 `tooManyAttempts()`/`remainingAttempts()`/`availableIn()` call `ZCARD`/`TTL` directly, without re-pruning — `RateLimiterInterface` doesn't pass `$decaySeconds` to those methods, so they can only report against whatever `attempt()` last pruned. `ThrottleMiddleware` already calls them immediately after `attempt()`, so this is accurate in the actual call pattern; a caller that queries long after the last `attempt()` sees a possibly-stale count until the next `attempt()` re-prunes. `resetAttempts()` calls `DEL key`. Throws `RuntimeException` at construction if `ext-redis` is not loaded — same guard as `RedisDriver`.
 
 ---
@@ -347,6 +356,7 @@ Redis sorted set via `ext-redis`, one member per hit (score = `microtime(true)` 
 Delegates to any `CacheInterface` (Array, File, Redis). Each entry is stored as `['hits' => int, 'reset_at' => int]`. The cache TTL is computed as remaining seconds to `reset_at`, so the entry expires together with the window.
 
 - Window is fixed from the first hit; subsequent writes compute `max(1, reset_at - time())` as TTL.
+- `attempt()` is a read-modify-write over `get()`/`set()`, so it runs under `$cache->lock('rate-limiter-lock:<key>', 5)`, retried with a short random sleep for up to 1 s; if the lock can't be taken in that time the attempt is refused (fail closed — only a burst on one key causes it). The guarantee is as wide as the cache driver's lock: cross-process for File/Redis/Memcached, in-process for the Array cache driver.
 - Does not require `ext-redis` — works with any configured cache driver.
 - `readEntry()` defensively validates the stored value shape.
 
@@ -355,7 +365,7 @@ Delegates to any `CacheInterface` (Array, File, Redis). Each entry is stored as 
 ### ThrottleMiddleware (`src/Middleware/ThrottleMiddleware.php`)
 
 Implements `ParameterizedMiddlewareInterface` (`ez-php/contracts`). Resolves the client IP, calls `attempt()`, and either:
-- Returns **HTTP 429** (`Too Many Requests`) immediately — `$next` is not called.
+- Returns **HTTP 429** immediately — `$next` is not called. Body `Too Many Requests`, or the framework's JSON error envelope `{"error":{"code":429,"message":"Too Many Requests"}}` when `$request->wantsJson()`; both with `Retry-After`.
 - Calls `$next($request)`, then adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers to the response.
 
 **IP resolution** — delegated to `RequestInterface::ip($trustedProxies)`:
@@ -380,6 +390,9 @@ Reads `config/rate_limiter.php` and binds `RateLimiterInterface` lazily to the m
 | `rate_limiter.redis.host` | string | `'127.0.0.1'` | Redis hostname |
 | `rate_limiter.redis.port` | int | `6379` | Redis port |
 | `rate_limiter.redis.database` | int | `0` | Redis database index |
+| `rate_limiter.trusted_proxies` | list\|string | `[]` | Proxy IPs passed to the bound `ThrottleMiddleware` (comma-separated string accepted) |
+
+It also binds `ThrottleMiddleware` (default limits, `trustedProxies` from config); the container can't autowire it on its own (the optional `?Closure $keyResolver` parameter), and an application binding registered later replaces it.
 
 Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `CacheInterface` from the container — `CacheServiceProvider` must be registered first.
 
@@ -389,13 +402,14 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 
 - **`attempt()` does not count rejected hits** — A call that returns false (limit already reached) does not increment the counter. The counter only advances when a request is actually allowed through. This makes the hit count an accurate record of served requests, not attempted ones.
 - **Fixed decay window from first hit (`ArrayDriver`/`RedisDriver`/`CacheDriver`/`FileDriver`)** — The window starts on the first `attempt()` call and ends `$decaySeconds` later regardless of further activity. Sliding windows require storing per-request timestamps and are more expensive; fixed windows are simpler and sufficient for most throttle use cases. `SlidingWindowRedisDriver` is the one exception — a fifth interchangeable driver behind the same `RateLimiterInterface`, for callers that specifically need true sliding-window semantics (e.g. "no more than N requests in *any* trailing 60-second window", not "N requests per calendar-aligned 60-second bucket") and accept the extra Redis cost (a sorted set with one member per hit, pruned on every `attempt()`, instead of a single counter).
-- **`RedisDriver` uses INCR + conditional EXPIRE** — `INCR` is atomic in Redis. Setting `EXPIRE` only on the first hit (when the counter returns 1) avoids resetting the window on every request. If `INCR` returns `false` (should not happen in practice), the expiry is still set defensively.
+- **Both Redis drivers decide inside one Lua script** — Check-then-increment as separate round-trips let concurrent requests all pass the check and overshoot the limit, and `INCR` + `EXPIRE` as two commands could leave a never-expiring key after a crash (a permanent lockout). The script makes check, write and TTL atomic; `RedisDriver` sets `EXPIRE` only when the key has no TTL, so later hits don't extend the window. A failing `EVAL` (Redis down, script error) fails open, like any other Redis error here. `RateLimiterConcurrency` in the tests proves it with parallel processes.
 - **`FileDriver` holds an exclusive lock across the whole read-modify-write** — `attempt()` opens the counter file with `fopen('c+')`, takes `flock(LOCK_EX)`, then reads, decides and writes before releasing. This is what makes it safe under PHP-FPM: a non-locking implementation (like `ArrayDriver`, or a naive `file_put_contents`) lets two workers read the same count, both pass the check, and both write the same value — so the limit would never trip. Read-only methods take `LOCK_SH`.
 - **`FileDriver` hashes the key into the filename** — Throttle keys embed the client IP and arbitrary caller-supplied text, which may contain `/` or `..`. `sha1($key)` gives a fixed, filesystem-safe name and makes traversal impossible by construction.
 - **`FileDriver::prune()` is opt-in, not automatic** — An expired key is reclaimed when it is next read, but nothing reclaims keys that stop being used. Throttle keys are `throttle:<client-ip>`, so a public endpoint accumulates one `.limit` file per unique IP — driven by untrusted input, in exactly the single-host-without-Redis deployment this driver targets. `prune()` deletes every counter whose window has expired (and any file whose contents are unreadable, which expiry can never reclaim) and returns the count. It is not called from the hot path: that would cost a directory scan per request. Run it from `schedule:run` or cron. It is deliberately **not** on `RateLimiterInterface` — the other drivers have nothing to prune, since Redis and the cache expire their own keys and `ArrayDriver` dies with the process. Live counters are re-checked under `LOCK_EX` and left alone; deleting one would hand that client a fresh window.
 - **`FileDriver` is single-host** — Locking is filesystem-level, so a shared network mount across hosts is not a supported configuration. Use `RedisDriver` for multi-host deployments.
+- **`CacheDriver` serialises `attempt()` with the cache's `lock()`** — `CacheInterface` has no compare-and-set, and cache drivers don't lock their readers (the File cache driver can even be read mid-write), so an unlocked read-modify-write loses increments. It fails closed on lock timeout, unlike the Redis drivers' fail-open on outage: the timeout means heavy contention on one key, not a broken backend.
 - **`CacheDriver` computes remaining TTL** — On every write, the TTL is computed as `max(1, reset_at - time())`. This ensures the cache entry expires at the same moment as the rate limit window, without resetting the window on each hit.
-- **`ThrottleMiddleware` does not call `$next` on throttle** — The 429 response is returned immediately, saving downstream middleware and controller execution. The response body is intentionally minimal (`Too Many Requests`); consumers requiring a JSON body should extend or wrap this middleware.
+- **`ThrottleMiddleware` does not call `$next` on throttle** — The 429 response is returned immediately, saving downstream middleware and controller execution. The body is intentionally minimal: `Too Many Requests`, or the framework's JSON error envelope for `wantsJson()` requests; anything richer means wrapping this middleware.
 - **`X-Forwarded-For` is ignored unless the peer is a trusted proxy** — With no `$trustedProxies` the key is `REMOTE_ADDR`. Honouring the header unconditionally let any client get a fresh bucket per request (random header → limit bypass) or exhaust a victim's bucket by forging the victim's IP. Behind a proxy, pass its address(es); the leftmost header entry is never used blindly because clients control it.
 - **`ez-php/cache` is a hard `require`** — `CacheDriver` is a first-class backend, not an optional add-on. Requiring `ez-php/cache` ensures all three drivers are always available without conditional autoloading. The module is lightweight (no heavy deps).
 - **The `RateLimiter` façade fails fast when unconfigured.** `getInstance()` throws `RuntimeException` until `RateLimiterServiceProvider::boot()` (or a test) calls `setInstance()`, like `Mail`/`Storage`/`Flag`. It used to fall back to a fresh `ArrayDriver`, which is per PHP process: under PHP-FPM every worker counts from zero, so a missing provider silently disabled the limit — a security control failing open. Unlike `Ai`/`Event`/`Http`, whose fallbacks only degrade output, a rate limiter has no safe default. Components that take `RateLimiterInterface` by injection (`ThrottleMiddleware`, `RateLimitedChannel`, queue `RateLimited`) are unaffected.
@@ -417,7 +431,7 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 
 | Concern | Where it belongs |
 |---|---|
-| IP trust / proxy configuration | Application infrastructure (Nginx, load balancer) |
+| Proxy setup beyond listing trusted proxy IPs (`rate_limiter.trusted_proxies`) | Application infrastructure (Nginx, load balancer) |
 | Sliding window rate limiting for non-Redis backends | `SlidingWindowRedisDriver` covers the Redis case; an `ArrayDriver`/`FileDriver` equivalent would need the same per-request timestamp storage this module has otherwise avoided for simplicity — application layer if needed |
 | Login brute-force protection (specific logic) | Application layer, using this module's interface |
 | API key quotas | Application layer (different key scheme + persistence) |
