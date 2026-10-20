@@ -195,12 +195,16 @@ Create `config/rate_limiter.php`:
 ```php
 <?php
 return [
-    'driver' => getenv('RATE_LIMITER_DRIVER') ?: 'array', // array | redis | cache
+    'driver' => getenv('RATE_LIMITER_DRIVER') ?: 'array', // array | file | redis | cache
+
+    'file' => [
+        'path' => getenv('RATE_LIMITER_FILE_PATH') ?: sys_get_temp_dir() . '/ez-php-rate-limiter',
+    ],
 
     'redis' => [
-        'host'     => getenv('REDIS_HOST') ?: '127.0.0.1',
-        'port'     => (int) (getenv('REDIS_PORT') ?: 6379),
-        'database' => (int) (getenv('REDIS_RATE_LIMITER_DB') ?: 0),
+        'host'     => getenv('RATE_LIMITER_REDIS_HOST') ?: '127.0.0.1',
+        'port'     => (int) (getenv('RATE_LIMITER_REDIS_PORT') ?: 6379),
+        'database' => (int) (getenv('RATE_LIMITER_REDIS_DB') ?: 0),
     ],
 
     // Reverse proxies whose X-Forwarded-For ThrottleMiddleware honours.

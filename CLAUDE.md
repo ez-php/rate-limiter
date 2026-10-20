@@ -264,7 +264,7 @@ When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array i
 
 # Package: ez-php/rate-limiter
 
-Request throttling for ez-php applications — three backend drivers, a unified interface, and `ThrottleMiddleware`.
+Request throttling for ez-php applications — five backend drivers (`ArrayDriver`, `FileDriver`, `RedisDriver`, `SlidingWindowRedisDriver`, `CacheDriver`), a unified interface, and `ThrottleMiddleware`.
 
 ---
 
@@ -412,7 +412,7 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 - **`CacheDriver` computes remaining TTL** — On every write, the TTL is computed as `max(1, reset_at - time())`. This ensures the cache entry expires at the same moment as the rate limit window, without resetting the window on each hit.
 - **`ThrottleMiddleware` does not call `$next` on throttle** — The 429 response is returned immediately, saving downstream middleware and controller execution. The body is intentionally minimal: `Too Many Requests`, or the framework's JSON error envelope for `wantsJson()` requests; anything richer means wrapping this middleware.
 - **`X-Forwarded-For` is ignored unless the peer is a trusted proxy** — With no `$trustedProxies` the key is `REMOTE_ADDR`. Honouring the header unconditionally let any client get a fresh bucket per request (random header → limit bypass) or exhaust a victim's bucket by forging the victim's IP. Behind a proxy, pass its address(es); the leftmost header entry is never used blindly because clients control it.
-- **`ez-php/cache` is a hard `require`** — `CacheDriver` is a first-class backend, not an optional add-on. Requiring `ez-php/cache` ensures all three drivers are always available without conditional autoloading. The module is lightweight (no heavy deps).
+- **`ez-php/cache` is a hard `require`** — `CacheDriver` is a first-class backend, not an optional add-on. Requiring `ez-php/cache` ensures all five drivers are always available without conditional autoloading. The module is lightweight (no heavy deps).
 - **The `RateLimiter` façade fails fast when unconfigured.** `getInstance()` throws `RuntimeException` until `RateLimiterServiceProvider::boot()` (or a test) calls `setInstance()`, like `Mail`/`Storage`/`Flag`. It used to fall back to a fresh `ArrayDriver`, which is per PHP process: under PHP-FPM every worker counts from zero, so a missing provider silently disabled the limit — a security control failing open. Unlike `Ai`/`Event`/`Http`, whose fallbacks only degrade output, a rate limiter has no safe default. Components that take `RateLimiterInterface` by injection (`ThrottleMiddleware`, `RateLimitedChannel`, queue `RateLimited`) are unaffected.
 
 ---
