@@ -286,6 +286,9 @@ src/
 
 tests/
 ├── TestCase.php                       — Base PHPUnit test case
+├── RateLimiterServiceProviderTest.php  — Smoke test: RateLimiterServiceProvider registers and boots its bindings in a minimal application context without error
+├── RateLimiterProviderDriversTest.php  — The `cache` and `redis` branches of RateLimiterServiceProvider's driver match
+├── RateLimiterProviderConfigTypesTest.php  — wrong-typed config values fall back to the defaults instead of raising a TypeError
 ├── ArrayDriverTest.php                — Full contract tests; no external infrastructure
 ├── RedisDriverTest.php                — Full contract tests; requires live Redis; skipped without ext-redis
 ├── SlidingWindowRedisDriverTest.php   — Full contract tests + window-boundary pruning; requires live Redis; skipped without ext-redis; shares database 2 with RedisDriverTest
