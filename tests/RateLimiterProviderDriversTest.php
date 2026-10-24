@@ -55,7 +55,7 @@ final class RateLimiterProviderDriversTest extends ApplicationTestCase
         }
 
         try {
-            return (new Redis())->connect(self::redisHost(), self::redisPort(), 1.0);
+            return @(new Redis())->connect(self::redisHost(), self::redisPort(), 1.0);
         } catch (RedisException) {
             return false;
         }
