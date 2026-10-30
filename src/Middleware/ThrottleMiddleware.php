@@ -24,7 +24,8 @@ use LogicException;
  * (e.g. authenticated user id).
  *
  * On throttle: returns HTTP 429 with a plain-text body, or the framework's
- *              JSON error envelope when the request wantsJson().
+ *              JSON error envelope when the request wantsJson() — or whatever a
+ *              ThrottledResponseFactoryInterface builds; `Retry-After` is added either way.
  * On pass:     adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers.
  *
  * Per-route limits come from registration parameters —
@@ -51,6 +52,8 @@ final readonly class ThrottleMiddleware implements ParameterizedMiddlewareInterf
      * @param list<string>                $trustedProxies IP addresses of reverse proxies whose
      *                                                   `X-Forwarded-For` header is honoured. Empty (default):
      *                                                   the header is ignored and `REMOTE_ADDR` is the key.
+     * @param ThrottledResponseFactoryInterface|null $throttledResponse Builds the 429 response instead of the
+     *                                                   default plain-text / JSON-envelope body.
      */
     public function __construct(
         private RateLimiterInterface $limiter,
@@ -59,6 +62,7 @@ final readonly class ThrottleMiddleware implements ParameterizedMiddlewareInterf
         private string $keyPrefix = 'throttle',
         private ?\Closure $keyResolver = null,
         private array $trustedProxies = [],
+        private ?ThrottledResponseFactoryInterface $throttledResponse = null,
     ) {
     }
 
@@ -85,12 +89,9 @@ final readonly class ThrottleMiddleware implements ParameterizedMiddlewareInterf
         $key = $keyPrefix . ':' . $keySuffix;
 
         if (!$this->limiter->attempt($key, $maxAttempts, $decaySeconds)) {
-            $response = $request->wantsJson()
-                ? (new Response('{"error":{"code":429,"message":"Too Many Requests"}}', 429))
-                    ->withHeader('Content-Type', 'application/json')
-                : new Response('Too Many Requests', 429);
+            $retryAfter = $this->limiter->availableIn($key);
 
-            return $response->withHeader('Retry-After', (string) $this->limiter->availableIn($key));
+            return $this->throttled($request, $retryAfter)->withHeader('Retry-After', (string) $retryAfter);
         }
 
         /** @var ResponseInterface $response */
@@ -99,6 +100,26 @@ final readonly class ThrottleMiddleware implements ParameterizedMiddlewareInterf
         return $response
             ->withHeader('X-RateLimit-Limit', (string) $maxAttempts)
             ->withHeader('X-RateLimit-Remaining', (string) $this->limiter->remainingAttempts($key, $maxAttempts));
+    }
+
+    /**
+     * The 429 response: the configured factory's, else the built-in body.
+     *
+     * @param RequestInterface $request
+     * @param int              $retryAfter
+     *
+     * @return ResponseInterface
+     */
+    private function throttled(RequestInterface $request, int $retryAfter): ResponseInterface
+    {
+        if ($this->throttledResponse !== null) {
+            return $this->throttledResponse->create($request, $retryAfter);
+        }
+
+        return $request->wantsJson()
+            ? (new Response('{"error":{"code":429,"message":"Too Many Requests"}}', 429))
+                ->withHeader('Content-Type', 'application/json')
+            : new Response('Too Many Requests', 429);
     }
 
     /**

@@ -7,6 +7,7 @@ namespace EzPhp\RateLimiter;
 use EzPhp\Cache\CacheInterface;
 use EzPhp\Contracts\ConfigInterface;
 use EzPhp\Contracts\ServiceProvider;
+use EzPhp\RateLimiter\Middleware\ThrottledResponseFactoryInterface;
 use EzPhp\RateLimiter\Middleware\ThrottleMiddleware;
 use Redis;
 
@@ -20,7 +21,8 @@ use Redis;
  *
  * Also binds `ThrottleMiddleware` with the default limits and the proxies from
  * `rate_limiter.trusted_proxies` (a list, or a comma-separated string such as a
- * `TRUSTED_PROXIES` env var). An application binding registered later replaces it.
+ * `TRUSTED_PROXIES` env var) and, when bound, a ThrottledResponseFactoryInterface for
+ * the 429 body. An application binding registered later replaces it.
  *
  * @package EzPhp\RateLimiter
  */
@@ -56,6 +58,9 @@ final class RateLimiterServiceProvider extends ServiceProvider
             return new ThrottleMiddleware(
                 $this->app->make(RateLimiterInterface::class),
                 trustedProxies: self::configList($this->app->make(ConfigInterface::class), 'rate_limiter.trusted_proxies'),
+                throttledResponse: $this->app->has(ThrottledResponseFactoryInterface::class)
+                    ? $this->app->make(ThrottledResponseFactoryInterface::class)
+                    : null,
             );
         });
     }

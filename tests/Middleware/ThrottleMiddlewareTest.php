@@ -9,6 +9,7 @@ use EzPhp\Http\Request;
 use EzPhp\Http\RequestInterface;
 use EzPhp\Http\Response;
 use EzPhp\RateLimiter\ArrayDriver;
+use EzPhp\RateLimiter\Middleware\ThrottledResponseFactoryInterface;
 use EzPhp\RateLimiter\Middleware\ThrottleMiddleware;
 use LogicException;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -397,5 +398,26 @@ final class ThrottleMiddlewareTest extends TestCase
             headers: $headers,
             server: array_merge(['REMOTE_ADDR' => '127.0.0.1'], $server),
         );
+    }
+
+    public function test_a_response_factory_builds_the_throttled_response(): void
+    {
+        $factory = new class () implements ThrottledResponseFactoryInterface {
+            public function create(RequestInterface $request, int $retryAfter): \EzPhp\Http\ResponseInterface
+            {
+                return (new Response('{"error":"too_many_requests","retry_in":' . $retryAfter . '}', 429))
+                    ->withHeader('Content-Type', 'application/json');
+            }
+        };
+        $middleware = new ThrottleMiddleware($this->limiter, 1, 60, throttledResponse: $factory);
+        $next = static fn (): Response => new Response('OK');
+
+        $middleware->handle(new Request('GET', '/', server: ['REMOTE_ADDR' => '9.9.9.9']), $next);
+        $response = $middleware->handle(new Request('GET', '/', server: ['REMOTE_ADDR' => '9.9.9.9']), $next);
+
+        self::assertSame(429, $response->status());
+        self::assertInstanceOf(Response::class, $response);
+        self::assertSame('{"error":"too_many_requests","retry_in":60}', $response->body());
+        self::assertSame('60', $response->headers()['Retry-After'] ?? null);
     }
 }

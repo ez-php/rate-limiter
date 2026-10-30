@@ -180,6 +180,23 @@ The middleware:
   the framework's error envelope). Both carry `Retry-After`.
 - Adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers on every passing response.
 
+To answer 429 in your own error shape, bind a `ThrottledResponseFactoryInterface`; the provider
+hands it to the container-built middleware (or pass it as `throttledResponse:` yourself).
+`Retry-After` is still added by the middleware:
+
+```php
+use EzPhp\Http\{RequestInterface, Response, ResponseInterface};
+use EzPhp\RateLimiter\Middleware\ThrottledResponseFactoryInterface;
+
+$this->app->bind(ThrottledResponseFactoryInterface::class, fn () => new class () implements ThrottledResponseFactoryInterface {
+    public function create(RequestInterface $request, int $retryAfter): ResponseInterface
+    {
+        return (new Response('{"error":"too_many_requests"}', 429))
+            ->withHeader('Content-Type', 'application/json');
+    }
+});
+```
+
 ---
 
 ## Service provider

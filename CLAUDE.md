@@ -151,7 +151,7 @@ php make_module.php <name> --description="..." --services=mysql,redis --extensio
 
 `<name>` is the kebab-case package name; the namespace is derived as
 `EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
-overrides it. Existing exceptions the guess gets wrong: `asyncapi` → `AsyncApi`,
+overrides it. Existing exceptions the guess gets wrong: `asyncapi` → `AsyncApi`, `asyncapi-ui` → `AsyncApiUi`,
 `bignum` → `BigNum`, `dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `graphql-subscriptions` → `GraphQLSubscriptions`, `oauth` → `OAuth`,
 `opcache` → `OPCache`, `openapi` → `OpenApi`, `qrcode` → `QrCode`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
 `websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
@@ -282,7 +282,8 @@ src/
 ├── RateLimiter.php                    — Static facade backed by a managed singleton; throws until RateLimiterServiceProvider sets it
 ├── RateLimiterServiceProvider.php     — Binds RateLimiterInterface per config and ThrottleMiddleware with rate_limiter.trusted_proxies; sets RateLimiter singleton in boot()
 └── Middleware/
-    └── ThrottleMiddleware.php         — ParameterizedMiddlewareInterface ('throttle:max,decay[,bucket]'); per-IP throttle; 429 (plain or JSON) on exceed; rate-limit headers
+    ├── ThrottleMiddleware.php         — ParameterizedMiddlewareInterface ('throttle:max,decay[,bucket]'); per-IP throttle; 429 (plain or JSON, or a factory's) on exceed; rate-limit headers
+    └── ThrottledResponseFactoryInterface.php — create(request, retryAfter): the application's own 429 body; bound → handed to ThrottleMiddleware by the provider
 
 tests/
 ├── TestCase.php                       — Base PHPUnit test case
@@ -295,10 +296,11 @@ tests/
 ├── CacheDriverTest.php                — Full contract tests; uses ez-php/cache ArrayDriver as backing store; concurrency test over the cache FileDriver
 ├── RateLimiterConcurrency.php         — Test helper: runs attempt() from parallel PHP processes and sums the allowed attempts
 ├── RateLimiterProviderTrustedProxiesTest.php — rate_limiter.trusted_proxies (comma string) reaches the container-built ThrottleMiddleware
+├── RateLimiterProviderThrottledResponseTest.php — a bound ThrottledResponseFactoryInterface shapes the container-built middleware's 429
 ├── RateLimiterFileDriverTest.php      — Full contract tests; temp directory; name-prefixed to avoid a class clash
 ├── RateLimiterTest.php                — Covers facade: instance management, fail-fast when unset, all four static methods
 └── Middleware/
-    └── ThrottleMiddlewareTest.php     — Pass-through, 429, headers, IP resolution, registration parameters via ArrayDriver
+    └── ThrottleMiddlewareTest.php     — Pass-through, 429, headers, IP resolution, registration parameters, response factory via ArrayDriver
 ```
 
 ---
@@ -370,7 +372,7 @@ Delegates to any `CacheInterface` (Array, File, Redis). Each entry is stored as 
 ### ThrottleMiddleware (`src/Middleware/ThrottleMiddleware.php`)
 
 Implements `ParameterizedMiddlewareInterface` (`ez-php/contracts`). Resolves the client IP, calls `attempt()`, and either:
-- Returns **HTTP 429** immediately — `$next` is not called. Body `Too Many Requests`, or the framework's JSON error envelope `{"error":{"code":429,"message":"Too Many Requests"}}` when `$request->wantsJson()`; both with `Retry-After`.
+- Returns **HTTP 429** immediately — `$next` is not called. Body `Too Many Requests`, or the framework's JSON error envelope `{"error":{"code":429,"message":"Too Many Requests"}}` when `$request->wantsJson()` — or, with a `ThrottledResponseFactoryInterface` (constructor argument; the provider passes a bound one), whatever `create($request, $retryAfter)` returns. `Retry-After` is added in every case.
 - Calls `$next($request)`, then adds `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers to the response.
 
 **IP resolution** — delegated to `RequestInterface::ip($trustedProxies)`:
@@ -414,7 +416,7 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 - **`FileDriver` is single-host** — Locking is filesystem-level, so a shared network mount across hosts is not a supported configuration. Use `RedisDriver` for multi-host deployments.
 - **`CacheDriver` serialises `attempt()` with the cache's `lock()`** — `CacheInterface` has no compare-and-set, and cache drivers don't lock their readers (the File cache driver can even be read mid-write), so an unlocked read-modify-write loses increments. It fails closed on lock timeout, unlike the Redis drivers' fail-open on outage: the timeout means heavy contention on one key, not a broken backend.
 - **`CacheDriver` computes remaining TTL** — On every write, the TTL is computed as `max(1, reset_at - time())`. This ensures the cache entry expires at the same moment as the rate limit window, without resetting the window on each hit.
-- **`ThrottleMiddleware` does not call `$next` on throttle** — The 429 response is returned immediately, saving downstream middleware and controller execution. The body is intentionally minimal: `Too Many Requests`, or the framework's JSON error envelope for `wantsJson()` requests; anything richer means wrapping this middleware.
+- **`ThrottleMiddleware` does not call `$next` on throttle** — The 429 response is returned immediately, saving downstream middleware and controller execution. The default body is intentionally minimal: `Too Many Requests`, or the framework's JSON error envelope for `wantsJson()` requests. Applications with their own error shape bind a `ThrottledResponseFactoryInterface` instead of keeping a copy of the middleware; it is an interface rather than a closure so the container can hand it over by type. The middleware keeps adding `Retry-After` (and, on pass, the `X-RateLimit-*` headers) itself, so a factory cannot drop them.
 - **`X-Forwarded-For` is ignored unless the peer is a trusted proxy** — With no `$trustedProxies` the key is `REMOTE_ADDR`. Honouring the header unconditionally let any client get a fresh bucket per request (random header → limit bypass) or exhaust a victim's bucket by forging the victim's IP. Behind a proxy, pass its address(es); the leftmost header entry is never used blindly because clients control it.
 - **`ez-php/cache` is a hard `require`** — `CacheDriver` is a first-class backend, not an optional add-on. Requiring `ez-php/cache` ensures all five drivers are always available without conditional autoloading. The module is lightweight (no heavy deps).
 - **The `RateLimiter` façade fails fast when unconfigured.** `getInstance()` throws `RuntimeException` until `RateLimiterServiceProvider::boot()` (or a test) calls `setInstance()`, like `Mail`/`Storage`/`Flag`. It used to fall back to a fresh `ArrayDriver`, which is per PHP process: under PHP-FPM every worker counts from zero, so a missing provider silently disabled the limit — a security control failing open. Unlike `Ai`/`Event`/`Http`, whose fallbacks only degrade output, a rate limiter has no safe default. Components that take `RateLimiterInterface` by injection (`ThrottleMiddleware`, `RateLimitedChannel`, queue `RateLimited`) are unaffected.
@@ -440,5 +442,5 @@ Unknown driver values fall back to `ArrayDriver`. The `cache` driver resolves `C
 | Sliding window rate limiting for non-Redis backends | `SlidingWindowRedisDriver` covers the Redis case; an `ArrayDriver`/`FileDriver` equivalent would need the same per-request timestamp storage this module has otherwise avoided for simplicity — application layer if needed |
 | Login brute-force protection (specific logic) | Application layer, using this module's interface |
 | API key quotas | Application layer (different key scheme + persistence) |
-| Circuit breaker | Application layer or a dedicated module |
+| Circuit breaker | `ez-php/http-client`'s `CircuitBreakerTransport` (cache-backed, shared across processes) |
 | Rate limit storage shared across services | Infrastructure layer (centralised Redis, API gateway) |
